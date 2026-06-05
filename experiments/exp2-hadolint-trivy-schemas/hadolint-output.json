@@ -1,0 +1,1 @@
+[{"code":"DL3008","column":1,"file":"-","level":"warning","line":4,"message":"Pin versions in apt get install. Instead of apt-get install <package> use apt-get install <package>=<version>"}]

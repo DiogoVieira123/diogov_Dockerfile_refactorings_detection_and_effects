@@ -1,0 +1,3 @@
+Instruções RUN antes: 4
+Instruções RUN depois: 1
+Refatoração detectada: Consolidação de RUN (4 → 1)

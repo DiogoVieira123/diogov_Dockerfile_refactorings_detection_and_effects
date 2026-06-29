@@ -1,0 +1,24 @@
+# BEFORE — R12 Remove RUN Instruction (mv command)
+# This Dockerfile copies each file to a temporary location and then uses a
+# separate RUN instruction with `mv` to move it to its final destination.
+# Each extra RUN instruction creates an additional image layer.
+
+FROM alpine:3.20
+
+WORKDIR /app
+
+# Copy the application config to a temporary path
+COPY app.conf /tmp/app.conf
+
+# Extra RUN instruction whose only purpose is to move the file to its destination
+RUN mkdir -p /app/config && mv /tmp/app.conf /app/config/app.conf
+
+# Copy the entrypoint script to a temporary path
+COPY entrypoint.sh /tmp/entrypoint.sh
+
+# Another RUN mv just to relocate the script
+RUN mkdir -p /app/bin && mv /tmp/entrypoint.sh /app/bin/entrypoint.sh
+
+RUN chmod +x /app/bin/entrypoint.sh
+
+CMD ["/app/bin/entrypoint.sh"]

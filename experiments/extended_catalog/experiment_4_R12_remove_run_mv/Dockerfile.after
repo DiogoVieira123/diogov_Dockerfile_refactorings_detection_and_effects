@@ -1,0 +1,19 @@
+# AFTER — R12 Remove RUN Instruction (mv command)
+# The RUN mv instructions have been removed. The destination path is now
+# configured directly in the COPY instruction, eliminating the extra layers
+# that the `mv` commands created. COPY creates the destination directories
+# automatically, so no `mkdir` or `mv` is needed.
+
+FROM alpine:3.20
+
+WORKDIR /app
+
+# Copy directly to the final destination — no RUN mv needed
+COPY app.conf /app/config/app.conf
+
+# Copy the entrypoint directly to its final destination
+COPY entrypoint.sh /app/bin/entrypoint.sh
+
+RUN chmod +x /app/bin/entrypoint.sh
+
+CMD ["/app/bin/entrypoint.sh"]

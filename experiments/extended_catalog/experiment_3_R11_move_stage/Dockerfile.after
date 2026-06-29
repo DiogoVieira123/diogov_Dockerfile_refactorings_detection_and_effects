@@ -1,0 +1,11 @@
+# AFTER (main) — R11 Move Stage
+# The main Dockerfile no longer contains the build stage. It copies the artifact
+# from the separately-built builder image (r11-builder:1.0), which was extracted
+# into its own Dockerfile.builder. The image is referenced with an explicit tag.
+
+FROM r11-builder:1.0 AS builder
+
+FROM alpine:3.20
+WORKDIR /app
+COPY --from=builder /build/artifact.txt /app/artifact.txt
+CMD ["cat", "/app/artifact.txt"]

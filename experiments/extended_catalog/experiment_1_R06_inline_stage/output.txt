@@ -1,0 +1,32 @@
+==================================================
+ R06 - Inline Stage
+ Experiment 1 - Extended Catalog
+ Date: 2026-06-29 01:57:12 UTC
+==================================================
+Docker OK. Socket: /var/run/docker.sock
+## Building images
+  BEFORE build: OK
+  AFTER  build: OK
+## Metric 1 — Image size (bytes)
+  BEFORE: 3632710 bytes
+  AFTER:  3632827 bytes
+  Delta:  117 bytes
+## Metric 2 — Hadolint warnings (count + detail)
+  BEFORE count: 0 warnings
+  AFTER  count: 0 warnings
+  Delta:        0 warnings
+  --- Hadolint detail BEFORE (exact codes) ---
+  (no warnings)
+  --- Hadolint detail AFTER (exact codes) ---
+  (no warnings)
+## Metric 3 — CVEs (Trivy)
+  BEFORE: 0 CVEs
+  AFTER:  0 CVEs
+  Delta:  0 CVEs
+==================================================
+ SUMMARY (Delta = AFTER - BEFORE)
+==================================================
+  Image size : 117 bytes
+  Hadolint   : 0 warnings
+  CVEs       : 0
+Done. Results saved to output.txt

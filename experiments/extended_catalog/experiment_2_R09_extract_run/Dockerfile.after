@@ -1,0 +1,15 @@
+# AFTER — R09 Extract RUN Instructions
+# The complex shell sequence has been extracted to an external script (setup.sh),
+# which is copied into the image and executed. The Dockerfile RUN logic is now a
+# single call to the script, making the Dockerfile cleaner and easier to maintain.
+
+FROM alpine:3.20
+WORKDIR /app
+
+COPY app.txt /app/app.txt
+COPY setup.sh /app/setup.sh
+
+# The complex logic now lives in setup.sh; the Dockerfile just runs it
+RUN chmod +x /app/setup.sh && /app/setup.sh
+
+CMD ["sh", "-c", "cat /app/data/app.txt"]

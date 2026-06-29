@@ -1,0 +1,14 @@
+# BEFORE — R11 Move Stage
+# A single multi-stage Dockerfile containing both a build stage and the final
+# runtime stage. The build stage could be extracted into its own standalone
+# Dockerfile and reused as a pre-built base image.
+
+FROM alpine:3.20 AS builder
+WORKDIR /build
+COPY app.txt /build/app.txt
+RUN cp /build/app.txt /build/artifact.txt
+
+FROM alpine:3.20
+WORKDIR /app
+COPY --from=builder /build/artifact.txt /app/artifact.txt
+CMD ["cat", "/app/artifact.txt"]

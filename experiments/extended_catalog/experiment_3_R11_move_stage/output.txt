@@ -1,0 +1,42 @@
+==================================================
+ R11 - Move Stage
+ Experiment 3 - Extended Catalog
+ Date: 2026-06-29 02:11:30 UTC
+==================================================
+Docker OK. Socket: /var/run/docker.sock
+## Building images
+  BEFORE build: OK
+  AFTER builder build (extracted stage): OK
+  AFTER  main build: OK
+## Metric 1 — Image size (bytes)
+   (final runtime image; the AFTER value is the main image, the standalone
+    builder image is a separate reusable artifact and not the deployed one)
+  BEFORE: 3632724 bytes
+  AFTER:  3632725 bytes
+  Delta:  1 bytes
+## Metric 2 — Hadolint warnings (count + detail)
+   (BEFORE: the single multi-stage file; AFTER: builder + main combined)
+  BEFORE count: 0 warnings
+  AFTER  count: 0 warnings  (main: 0 + builder: 0)
+  Delta:        0 warnings
+  --- Hadolint detail BEFORE (exact codes) ---
+  (no warnings)
+  --- Hadolint detail AFTER main (exact codes) ---
+  (no warnings)
+  --- Hadolint detail AFTER builder (exact codes) ---
+  (no warnings)
+## Metric 3 — CVEs (Trivy)
+   (final runtime image in both states)
+  BEFORE: 0 CVEs
+  AFTER:  0 CVEs
+  Delta:  0 CVEs
+==================================================
+ SUMMARY (Delta = AFTER - BEFORE)
+==================================================
+  Image size : 1 bytes
+  Hadolint   : 0 warnings
+  CVEs       : 0
+Note: the three metrics measure regression. The maintainability benefit of
+Move Stage (isolating a stage into a reusable, standalone Dockerfile) is argued
+from the nature of the operation in the dissertation, not claimed here.
+Done. Results saved to output.txt

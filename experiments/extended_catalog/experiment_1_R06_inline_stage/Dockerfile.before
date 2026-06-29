@@ -1,0 +1,15 @@
+# BEFORE — R06 Inline Stage
+# A multi-stage build that does NOT provide any benefit: the first ("builder")
+# stage produces no build-only artifacts that need to be discarded, and both
+# stages use the same base image. The extra stage only adds structural
+# complexity. This is the typical case where Inline Stage applies.
+
+FROM alpine:3.20 AS builder
+WORKDIR /app
+COPY app.sh /app/app.sh
+RUN chmod +x /app/app.sh
+
+FROM alpine:3.20
+WORKDIR /app
+COPY --from=builder /app/app.sh /app/app.sh
+CMD ["/app/app.sh"]

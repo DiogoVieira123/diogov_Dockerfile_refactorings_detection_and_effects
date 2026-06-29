@@ -1,0 +1,19 @@
+# BEFORE — R09 Extract RUN Instructions
+# A single RUN instruction contains a complex sequence of shell commands inline.
+# This makes the Dockerfile harder to read and maintain.
+
+FROM alpine:3.20
+WORKDIR /app
+
+COPY app.txt /app/app.txt
+
+# Complex inline RUN: multiple shell steps embedded directly in the Dockerfile
+RUN mkdir -p /app/data /app/logs /app/config \
+    && cp /app/app.txt /app/data/app.txt \
+    && echo "setup step 1 done" >> /app/logs/setup.log \
+    && echo "setup step 2 done" >> /app/logs/setup.log \
+    && echo "setup step 3 done" >> /app/logs/setup.log \
+    && chmod -R 755 /app/data \
+    && rm -f /app/app.txt
+
+CMD ["sh", "-c", "cat /app/data/app.txt"]

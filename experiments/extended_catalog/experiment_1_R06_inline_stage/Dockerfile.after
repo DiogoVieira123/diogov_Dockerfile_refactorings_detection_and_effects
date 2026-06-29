@@ -1,0 +1,9 @@
+# AFTER — R06 Inline Stage
+# The unnecessary build stage has been inlined/merged into a single stage.
+# Same functionality, simpler structure: no COPY --from, no second FROM.
+
+FROM alpine:3.20
+WORKDIR /app
+COPY app.sh /app/app.sh
+RUN chmod +x /app/app.sh
+CMD ["/app/app.sh"]

@@ -1,0 +1,3 @@
+record_id,title,doi,database,duplicate_of
+R028,Refactorings and Technical Debt in Docker Projects: An Empirical Study,10.1109/ASE51524.2021.9678585,IEEE,
+R246,Refactorings and technical debt in docker projects: an empirical study,10.1109/ASE51524.2021.9678585,ACM,R028

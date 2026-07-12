@@ -1,0 +1,4 @@
+database,query,execution_date,results_count
+IEEE,"(""Dockerfile"" AND (""refactoring"" OR ""smells"")) OR (""Infrastructure as Code"" AND ""quality"") OR (""Docker"" AND ""mining"") OR (""Docker"" AND ""empirical study"")",2026-07-11,241
+ACM,"(""Dockerfile"" AND (""refactoring"" OR ""smells"")) OR (""container"" AND ""technical debt"") OR (""Docker"" AND ""reproducible research"")",2026-07-11,20
+Springer,"title:""Dockerfile""",2026-07-11,12

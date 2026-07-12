@@ -1,0 +1,6 @@
+# Base images of the before/ and after/ Dockerfiles (pinned tags), resolved digests
+before: ubuntu:22.04
+ubuntu@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
+after: alpine:3.19
+alpine@sha256:6baf43584bcb78f2e5847d1de515f23499913ac9f12bdf834811a3145eb11ca1
+Recorded (UTC): 2026-07-11

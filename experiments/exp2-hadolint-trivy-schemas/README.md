@@ -36,5 +36,11 @@ output for programmatic consumption.
 
 ## How to reproduce
 
-Run the two commands above and inspect the resulting files to confirm that both
-produce well-formed, parseable JSON with the field structure described above.
+Run the two commands above (scripted verbatim in `run.sh`, for consistency with
+Experiment 1) and inspect the resulting files to confirm that both produce
+well-formed, parseable JSON with the field structure described above.
+
+Dependency note: `trivy-output.json` was generated against the
+`poc-1-inline-run:before` image from Experiment 1. To reproduce it, that image
+must be built first (`../exp1-poc-refactorings/run_one.sh poc-1-inline-run`),
+otherwise the Trivy invocation has no image to scan.

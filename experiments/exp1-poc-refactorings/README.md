@@ -70,3 +70,10 @@ resolved to Ubuntu 26.04 at measurement time (recorded in
 date may yield different size and CVE values, but the elimination of the DL3007
 smell is stable. Only the DL3007 warning delta is part of the argument for this
 PoC; its size and CVE deltas are not.
+
+Note on base-image digests: PoC-1, PoC-3, and PoC-4 use fixed tags
+(`ubuntu:22.04`, `alpine:3.19`). For reproducibility, the SHA256 digest to which
+each pinned tag resolves is recorded in a `base-image-digest.txt` file inside
+the corresponding PoC folder (obtained via
+`docker inspect --format='{{index .RepoDigests 0}}' <image>`). The Dockerfiles
+themselves are unchanged and keep their tags.

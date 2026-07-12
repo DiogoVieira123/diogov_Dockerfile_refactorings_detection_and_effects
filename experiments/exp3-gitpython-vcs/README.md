@@ -42,9 +42,13 @@ local clone of docker/getting-started.
     python3 teste_gitpython.py
 
 The script reads the Dockerfile at the two commits above and prints the BEFORE
-and AFTER versions, as captured in `output.txt`. The script must be run from
-inside the cloned repository, since it opens the Git repository at the current
-directory (`git.Repo(".")`).
+and AFTER versions, as captured in `output.txt`. By default it opens the Git
+repository at the current directory (`git.Repo(".")`), so it can be run from
+inside the cloned repository as above; alternatively, the repository path can
+be passed as the first command-line argument, so the script can be run from
+anywhere:
+
+    python3 teste_gitpython.py /path/to/getting-started
 
 ## Source commits
 

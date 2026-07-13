@@ -1,4 +1,4 @@
-=== ANTES (commit 2bca273) ===
+=== BEFORE (commit 2bca273) ===
 # Install the base requirements for the app.
 # This stage is to support development.
 FROM python:alpine AS base
@@ -33,7 +33,7 @@ RUN mkdocs build
 FROM nginx:alpine
 COPY --from=app-zip-creator /app.zip /usr/share/nginx/html/assets/app.zip
 COPY --from=build /app/site /usr/share/nginx/html
-=== DEPOIS (commit 2981665) ===
+=== AFTER (commit 2981665) ===
 # Install the base requirements for the app.
 # This stage is to support development.
 FROM --platform=$BUILDPLATFORM python:alpine AS base

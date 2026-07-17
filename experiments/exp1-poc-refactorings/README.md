@@ -15,16 +15,6 @@ side: image size in bytes through the Docker SDK, security vulnerabilities
 through Trivy, and structural warnings through Hadolint. The delta for each
 metric is the after value minus the before value.
 
-The four refactorings are drawn from the extended catalogue in Table 5.3 of the
-dissertation:
-
-| PoC | Refactoring (catalogue ID) | Primary / Secondary | Observed profile |
-|---|---|---|---|
-| PoC-1 | Inline RUN Instructions (R01) | Performance / Maintainability | Size and DL3059 |
-| PoC-2 | Update Base Image TAG (R02) | Security / Performance | DL3007 |
-| PoC-3 | Update Base Image (R10) | Security / Performance | Size and CVEs |
-| PoC-4 | Replace ADD with COPY (R08) | Security / Maintainability | DL3020 |
-
 ## Result
 
 | PoC | Delta Size (bytes) | Delta Warnings | Delta CVEs | Delta Instr |

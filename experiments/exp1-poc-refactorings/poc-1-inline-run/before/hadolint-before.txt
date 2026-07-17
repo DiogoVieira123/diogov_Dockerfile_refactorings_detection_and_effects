@@ -1,0 +1,10 @@
+-:2 DL3009 [92minfo[0m: Delete the apt lists (/var/lib/apt/lists) after installing something
+-:3 DL3008 [1m[93mwarning[0m: Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`
+-:3 DL3015 [92minfo[0m: Avoid additional packages by specifying `--no-install-recommends`
+-:3 DL3059 [92minfo[0m: Multiple consecutive `RUN` instructions. Consider consolidation.
+-:4 DL3015 [92minfo[0m: Avoid additional packages by specifying `--no-install-recommends`
+-:4 DL3059 [92minfo[0m: Multiple consecutive `RUN` instructions. Consider consolidation.
+-:4 DL3008 [1m[93mwarning[0m: Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`
+-:5 DL3059 [92minfo[0m: Multiple consecutive `RUN` instructions. Consider consolidation.
+-:5 DL3008 [1m[93mwarning[0m: Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`
+-:5 DL3015 [92minfo[0m: Avoid additional packages by specifying `--no-install-recommends`

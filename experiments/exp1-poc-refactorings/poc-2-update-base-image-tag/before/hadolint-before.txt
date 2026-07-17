@@ -1,0 +1,1 @@
+-:1 DL3007 [1m[93mwarning[0m: Using latest is prone to errors if the image will ever update. Pin the version explicitly to a release tag

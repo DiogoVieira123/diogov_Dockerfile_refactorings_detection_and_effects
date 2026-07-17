@@ -45,12 +45,12 @@ degrade that dimension.
 
 ## Summary of results
 
-| Refactoring | Image size (Delta) | Hadolint | CVEs | Measured benefit |
-|---|---|---|---|---|
-| R06 Inline Stage | +117 B (negligible) | 0 → 0 | 0 → 0 | none (no regression) |
-| R09 Extract RUN | +410 B (negligible) | 0 → 0 | 0 → 0 | none (no regression) |
-| R11 Move Stage | +1 B (identical) | 0 → 0 | 0 → 0 | none (no regression) |
-| R12 Remove RUN mv | **-1 332 B** | 0 → 0 | 0 → 0 | performance/size |
+| Refactoring | Image size (Delta) | Hadolint (filtered) | CVEs | Logical instructions | Measured benefit |
+|---|---|---|---|---|---|
+| R06 Inline Stage | +116 B | 0 -> 0 | 0 -> 0 | 8 -> 5 (-3) | none measurable on size, CVEs or warnings; structural reduction |
+| R09 Extract RUN Instructions | +417 B | 0 -> 0 | 0 -> 0 | 5 -> 6 (+1) | none measurable; structural cost of the extraction |
+| R11 Move Stage | +1 B | 0 -> 0 | 0 -> 0 | 8 -> 9 (+1) | none measurable; modularisation cost across two files |
+| R12 Remove RUN | -1,331 B | 0 -> 0 | 0 -> 0 | 8 -> 6 (-2) | performance/size |
 
 ## How to replicate
 

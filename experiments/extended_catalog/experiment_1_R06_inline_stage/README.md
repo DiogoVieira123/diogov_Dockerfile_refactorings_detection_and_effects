@@ -46,31 +46,35 @@ the Hadolint warning count.
 
 - A Linux host (this experiment was run on Ubuntu).
 - Docker installed and running. Verify with `docker info`.
+- Python 3 with `dockerfile-parse` (`pip install dockerfile-parse`).
 - Internet access (the first run pulls `alpine:3.20`, `hadolint/hadolint`
   and `aquasec/trivy`).
 
 **Steps**
 
 1. Place all the files of this folder in a single directory:
-   `Dockerfile.before`, `Dockerfile.after`, `app.sh`, `measure.sh`.
+   `Dockerfile.before`, `Dockerfile.after`, `app.sh`, `verify_catalog.py`.
 
 2. Open a terminal in that directory.
 
-3. Run the measurement script:
+3. Run the verification script:
    ```bash
-   bash measure.sh
+   python verify_catalog.py
    ```
    If Docker requires elevated privileges on your host, run instead:
    ```bash
-   sudo bash measure.sh
+   sudo python verify_catalog.py
    ```
 
 4. The script performs, automatically:
    - a `--no-cache` build of both Dockerfiles;
-   - the three measurements (image size, Hadolint warnings, Trivy CVEs) on each state;
-   - the computation of the Delta (AFTER - BEFORE) for each metric.
+   - the four measurements (image size, Trivy CVEs, Hadolint warnings, logical
+     instruction count) on each state;
+   - the computation of the Delta (AFTER - BEFORE) for each metric;
+   - a comparison of every measured Delta against the value reported in the
+     dissertation, printing `OK` or `DIFF` for each.
 
-5. The results are printed to the terminal and written to `output.txt`.
+5. The results and the comparison table are printed to the terminal.
 
 **Notes for an exact replication**
 
@@ -87,8 +91,7 @@ the Hadolint warning count.
 | `Dockerfile.before` | State before the refactoring (unnecessary multi-stage) |
 | `Dockerfile.after`  | State after the refactoring (single inlined stage) |
 | `app.sh`            | Sample application script used by the build |
-| `measure.sh`        | Measurement script (3 metrics) |
-| `output.txt`        | Raw measurement results produced by the script |
+| `verify_catalog.py` | Standalone verification script: rebuilds both states, re-measures the four indicators, and compares each Delta against the reported value |
 
 ## Results
 
@@ -96,9 +99,11 @@ Measured on 2026-06-29 (Ubuntu, base image `alpine:3.20`):
 
 | Metric | Before | After | Delta |
 |---|---|---|---|
-| Image size (bytes) | 3 632 710 | 3 632 827 | +117 |
-| Hadolint warnings  | 0 (no warnings) | 0 (no warnings) | 0 |
-| CVEs               | 0 | 0 | 0 |
+| Image size (bytes) | 3,632,710 | 3,632,826 | +116 |
+| CVEs (unique) | 0 | 0 | +0 |
+| Hadolint warnings (DL3007, DL3020) | 0 | 0 | +0 |
+| Logical instructions | 8 | 5 | -3 |
+| Stages | 2 | 1 | -1 |
 
 ## Conclusion
 

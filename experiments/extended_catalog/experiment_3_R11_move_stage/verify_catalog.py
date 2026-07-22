@@ -12,17 +12,38 @@ reachable Docker daemon; without one the script reports what it can and says
 what it skipped, rather than failing.
 
     pip install dockerfile-parse
+
+R11 is a multi-file case: the BEFORE state is a single Dockerfile, while the
+AFTER state spans Dockerfile.after plus the extracted Dockerfile.builder. Each
+metric therefore has its own rule:
+
+  Instructions  BEFORE = Dockerfile.before
+                AFTER  = Dockerfile.after + Dockerfile.builder   (summed)
+  Warnings      BEFORE = Hadolint(Dockerfile.before)
+                AFTER  = Hadolint(Dockerfile.after) + Hadolint(Dockerfile.builder)
+  Image size    AFTER  = chained build (builder image first, then the final
+                runtime image) and ONLY the final runtime image is measured.
+                Image sizes are never summed: layers are shared between the
+                builder and the final image, so sizes are not additive.
+  CVEs          Unique VulnerabilityIDs of the final runtime image only.
 """
 
 import io
 import json
+import platform
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 BEFORE_DF = HERE / "Dockerfile.before"
-AFTER_DFS = [HERE / p for p in ['Dockerfile.after', 'Dockerfile.builder']]
+AFTER_MAIN_DF = HERE / "Dockerfile.after"
+BUILDER_DF = HERE / "Dockerfile.builder"
+# Both files together form the AFTER state (used for instructions and warnings).
+AFTER_DFS = [AFTER_MAIN_DF, BUILDER_DF]
+# The extracted stage is built first and consumed by Dockerfile.after via this tag.
+BUILDER_TAG = "r11-builder:1.0"
 CONTEXT_BEFORE = HERE / "."
 CONTEXT_AFTER = HERE / "."
 HADOLINT_FILTER = ['DL3007', 'DL3020']
@@ -58,11 +79,123 @@ def unique_cves(report):
     return len(ids)
 
 
-def filtered_warnings(dockerfile):
+def hadolint_run(dockerfile):
+    """Lint one Dockerfile, keeping the raw outputs so they can be written out.
+
+    Returns (filtered_count, total_count, json_text, human_text).
+    """
+    payload = dockerfile.read_bytes()
     raw = sh(["docker", "run", "--rm", "-i", "hadolint/hadolint",
-              "hadolint", "--format", "json", "-"], stdin=dockerfile.read_bytes())
-    codes = [i.get("code") for i in json.loads(raw.decode() or "[]")]
-    return sum(codes.count(c) for c in HADOLINT_FILTER), len(codes)
+              "hadolint", "--format", "json", "-"], stdin=payload)
+    human = sh(["docker", "run", "--rm", "-i", "hadolint/hadolint",
+                "hadolint", "-"], stdin=payload)
+    json_text = raw.decode(errors="replace").strip() or "[]"
+    codes = [i.get("code") for i in json.loads(json_text) if i.get("code")]
+    return (sum(codes.count(c) for c in HADOLINT_FILTER), len(codes),
+            json_text, human.decode(errors="replace"))
+
+
+def tool_versions():
+    """Versions behind this measurement, recorded into metrics_output.json."""
+    try:
+        import dockerfile_parse
+        dfp_version = getattr(dockerfile_parse, "__version__", "unknown")
+    except ImportError:
+        dfp_version = "not installed"
+    env = {"python": platform.python_version(), "dockerfile_parse": dfp_version}
+    env["docker_engine"] = sh(["docker", "version", "--format",
+                               "{{.Server.Version}}"]).decode(errors="replace").strip() or "unavailable"
+    env["hadolint"] = sh(["docker", "run", "--rm", "hadolint/hadolint",
+                          "hadolint", "--version"]).decode(errors="replace").strip() or "unavailable"
+    trivy_raw = sh(["docker", "run", "--rm", "aquasec/trivy",
+                    "--version", "--format", "json"]).decode(errors="replace").strip()
+    try:
+        env["trivy"] = json.loads(trivy_raw)
+    except json.JSONDecodeError:
+        env["trivy"] = trivy_raw or "unavailable"
+    return env
+
+
+def write_artifacts(before, after, sizes, cves, warns, totals, measured,
+                    raw_trivy, raw_hadolint):
+    """Overwrite this folder's evidence with the values just measured.
+
+    Only called when the full measurement succeeded, so a run without a Docker
+    daemon never replaces complete evidence with a partial record.
+    """
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    written = []
+
+    def put(name, text):
+        (HERE / name).write_text(text, encoding="utf-8")
+        written.append(name)
+
+    for label in ("before", "after"):
+        put(f"size-{label}.txt", f"{sizes[label]}\n")
+        put(f"trivy-{label}.json", raw_trivy[label].rstrip() + "\n")
+    put("logical-instructions-before.txt", f"{len(before)}\n")
+    put("logical-instructions-after.txt", f"{len(after)}\n")
+
+    # hadolint-before/after cover the single BEFORE file and the main AFTER file;
+    # hadolint-builder covers the extracted stage, so the AFTER sum is auditable.
+    for slot in ("before", "after", "builder"):
+        if slot not in raw_hadolint:
+            continue
+        json_text, human_text = raw_hadolint[slot]
+        put(f"hadolint-{slot}.json", json_text.rstrip() + "\n")
+        body = human_text.strip()
+        put(f"hadolint-{slot}.txt", (body + "\n") if body else "(no warnings reported)\n")
+
+    payload = {
+        "rule": "R11",
+        "name": "Move Stage",
+        "measured_utc": stamp,
+        "deltas": {
+            "delta_instr": measured["delta_instr"],
+            "delta_warnings": measured["delta_warnings"],
+            "delta_size_bytes": measured["delta_size"],
+            "delta_cves": measured["delta_cves"],
+        },
+        "before": {
+            "logical_instructions": len(before),
+            "stages": before.count("FROM"),
+            "warnings_filtered": warns["before"],
+            "warnings_total": totals["before"],
+            "size_bytes": sizes["before"],
+            "cves_unique": cves["before"],
+        },
+        "after": {
+            "logical_instructions": len(after),
+            "stages": after.count("FROM"),
+            "warnings_filtered": warns["after"],
+            "warnings_total": totals["after"],
+            "size_bytes": sizes["after"],
+            "cves_unique": cves["after"],
+        },
+        "definitions": {
+            "delta_instr": "Logical instructions via dockerfile-parse, COMMENT excluded, read "
+                           "from the Dockerfile text. An instruction spanning several physical "
+                           "lines through backslash continuations counts as one. BEFORE is "
+                           "Dockerfile.before; AFTER sums Dockerfile.after and Dockerfile.builder.",
+            "delta_warnings": "Hadolint warnings restricted to DL3007 and DL3020, the rules "
+                              "mapping to catalogue refactorings that carry maintainability as "
+                              "a dimension. AFTER sums the warnings of Dockerfile.after and "
+                              "Dockerfile.builder. warnings_total is context, not the metric.",
+            "delta_size_bytes": "Image size in bytes of the FINAL runtime image only, read "
+                                "through the Docker daemon. The builder image is never added: "
+                                "layers are shared, so image sizes are not additive.",
+            "delta_cves": "Distinct VulnerabilityID values reported by Trivy on the final "
+                          "runtime image only, not occurrences.",
+            "sign": "delta = after - before. For delta_instr the sign is read against the "
+                    "operation applied: consolidation reduces the count, extraction increases "
+                    "it, and neither is a verdict on its own.",
+        },
+        "environment": tool_versions(),
+    }
+    (HERE / "metrics_output.json").write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    written.append("metrics_output.json")
+    return written
 
 
 def row(label, before, after, delta):
@@ -89,25 +222,62 @@ def main():
     if have_docker:
         print("\n  Building both states with --no-cache. This takes a minute.")
         sizes, cves, warns, totals = {}, {}, {}, {}
-        for label, dockerfile, ctx in (("before", BEFORE_DF, CONTEXT_BEFORE),
-                                       ("after", AFTER_DFS[0], CONTEXT_AFTER)):
-            build = subprocess.run(
-                ["docker", "build", "--no-cache", "-f", str(dockerfile),
-                 "-t", f"{TAG}:{label}", str(ctx)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=False)
-            if build.returncode != 0:
-                tail = build.stderr.decode(errors="replace").strip().splitlines()
-                print(f"    {label}: BUILD FAILED — {tail[-1][:70] if tail else ''}")
+        raw_trivy, raw_hadolint = {}, {}
+        for label in ("before", "after"):
+            if label == "before":
+                # Single Dockerfile: one build, one file to lint.
+                builds = [(BEFORE_DF, f"{TAG}:before")]
+                lint_files = [BEFORE_DF]
+                ctx = CONTEXT_BEFORE
+            else:
+                # Chained build: the extracted stage is built first and tagged, so
+                # that Dockerfile.after can consume it through FROM r11-builder:1.0.
+                builds = [(BUILDER_DF, BUILDER_TAG), (AFTER_MAIN_DF, f"{TAG}:after")]
+                lint_files = [AFTER_MAIN_DF, BUILDER_DF]
+                ctx = CONTEXT_AFTER
+
+            failed = False
+            for dockerfile, tag in builds:
+                build = subprocess.run(
+                    ["docker", "build", "--no-cache", "-f", str(dockerfile),
+                     "-t", tag, str(ctx)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=False)
+                if build.returncode != 0:
+                    tail = build.stderr.decode(errors="replace").strip().splitlines()
+                    print(f"    {label} ({dockerfile.name}): BUILD FAILED — "
+                          f"{tail[-1][:70] if tail else ''}")
+                    failed = True
+                    break
+            if failed:
                 have_docker = False
                 break
-            sizes[label] = int(sh(["docker", "image", "inspect", f"{TAG}:{label}",
+
+            # Size and CVEs come from the FINAL runtime image only. The builder
+            # image is never measured and never added: layers are shared, so
+            # image sizes are not additive.
+            final_tag = f"{TAG}:{label}"
+            sizes[label] = int(sh(["docker", "image", "inspect", final_tag,
                                    "--format", "{{.Size}}"]).decode().strip())
             report = sh(["docker", "run", "--rm",
                          "-v", "/var/run/docker.sock:/var/run/docker.sock",
                          "aquasec/trivy", "image", "--quiet", "--format", "json",
-                         f"{TAG}:{label}"])
+                         final_tag])
             cves[label] = unique_cves(json.loads(report.decode() or "{}"))
-            warns[label], totals[label] = filtered_warnings(dockerfile)
+
+            raw_trivy[label] = report.decode(errors="replace").strip() or "{}"
+
+            # Warnings ARE summed across every Dockerfile that makes up the state:
+            # for AFTER that is Dockerfile.after plus Dockerfile.builder.
+            filtered_sum = total_sum = 0
+            for path in lint_files:
+                f_count, t_count, j_text, h_text = hadolint_run(path)
+                filtered_sum += f_count
+                total_sum += t_count
+                # "before" -> hadolint-before.*, "after" -> hadolint-after.*,
+                # the extracted stage keeps its own pair so the sum is auditable.
+                slot = "builder" if path is BUILDER_DF else label
+                raw_hadolint[slot] = (j_text, h_text)
+            warns[label], totals[label] = filtered_sum, total_sum
 
         if have_docker:
             measured.update(delta_size=sizes["after"] - sizes["before"],
@@ -136,6 +306,9 @@ def main():
     if len(AFTER_DFS) > 1:
         print(f"  (after spans {len(AFTER_DFS)} files: "
               f"{', '.join(p.name for p in AFTER_DFS)})")
+        print("  Instructions and Hadolint warnings are summed across both files;")
+        print("  image size and CVEs are taken from the FINAL runtime image only")
+        print("  (sizes are not additive, since the builder shares its layers).")
 
     if not have_docker:
         print("\n  Docker unreachable, so size, CVEs and warnings were skipped.")
@@ -154,8 +327,19 @@ def main():
     if drift:
         print("\n  A difference here is not necessarily an error. Image sizes and CVE")
         print("  counts depend on the base image and on the Trivy vulnerability")
-        print("  database at the time of measurement. The digests and tool versions")
-        print("  behind the reported values are in reset_total/out/environment.json.")
+        print("  database at the time of measurement. The tool versions behind this")
+        print("  run are recorded in metrics_output.json.")
+
+    if "delta_size" in measured:
+        written = write_artifacts(before, after, sizes, cves, warns, totals,
+                                  measured, raw_trivy, raw_hadolint)
+        print(f"\n  Evidence in this folder overwritten with this run "
+              f"({len(written)} files):")
+        print(f"    {', '.join(sorted(written))}")
+        print("  REPORTED above stays the dissertation baseline and is not rewritten.")
+    else:
+        print("\n  Nothing was written: the measurement was incomplete, so the")
+        print("  existing evidence in this folder was left untouched.")
     print()
 
 

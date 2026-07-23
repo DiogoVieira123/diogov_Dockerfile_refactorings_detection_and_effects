@@ -25,8 +25,12 @@ BEFORE_DF = HERE / "before/Dockerfile"
 AFTER_DFS = [HERE / p for p in ['after/Dockerfile']]
 CONTEXT_BEFORE = HERE / "before"
 CONTEXT_AFTER = HERE / "after"
-HADOLINT_FILTER = ['DL3007', 'DL3020']
-REPORTED = {'delta_instr': -3, 'delta_size': -194991, 'delta_cves': 0, 'delta_warnings': 0}
+# No Hadolint filter in the PoCs: "warnings total" counts EVERY finding the
+# linter reports. (The extended-catalogue verification scripts use the unified
+# maintainability filter instead.)
+# delta_warnings baseline re-derived from the same raw artifacts under the
+# unfiltered "warnings total" definition (10 -> 3 findings).
+REPORTED = {'delta_instr': -3, 'delta_size': -194991, 'delta_cves': 0, 'delta_warnings': -7}
 TAG = "verify-poc-1"
 
 
@@ -58,11 +62,12 @@ def unique_cves(report):
     return len(ids)
 
 
-def filtered_warnings(dockerfile):
+def warnings_total(dockerfile):
+    """Warnings total: every Hadolint finding, unfiltered."""
     raw = sh(["docker", "run", "--rm", "-i", "hadolint/hadolint",
               "hadolint", "--format", "json", "-"], stdin=dockerfile.read_bytes())
     codes = [i.get("code") for i in json.loads(raw.decode() or "[]")]
-    return sum(codes.count(c) for c in HADOLINT_FILTER), len(codes)
+    return len(codes)
 
 
 def row(label, before, after, delta):
@@ -88,7 +93,7 @@ def main():
 
     if have_docker:
         print("\n  Building both states with --no-cache. This takes a minute.")
-        sizes, cves, warns, totals = {}, {}, {}, {}
+        sizes, cves, warns = {}, {}, {}
         for label, dockerfile, ctx in (("before", BEFORE_DF, CONTEXT_BEFORE),
                                        ("after", AFTER_DFS[0], CONTEXT_AFTER)):
             build = subprocess.run(
@@ -107,7 +112,7 @@ def main():
                          "aquasec/trivy", "image", "--quiet", "--format", "json",
                          f"{TAG}:{label}"])
             cves[label] = unique_cves(json.loads(report.decode() or "{}"))
-            warns[label], totals[label] = filtered_warnings(dockerfile)
+            warns[label] = warnings_total(dockerfile)
 
         if have_docker:
             measured.update(delta_size=sizes["after"] - sizes["before"],
@@ -121,12 +126,10 @@ def main():
         print(row("Image size (bytes)", f"{sizes['before']:,}",
                   f"{sizes['after']:,}", measured["delta_size"]))
         print(row("CVEs (unique)", cves["before"], cves["after"], measured["delta_cves"]))
-        print(row("Hadolint warnings (filtered)", warns["before"], warns["after"],
+        print(row("Hadolint warnings (total)", warns["before"], warns["after"],
                   measured["delta_warnings"]))
-        print(row("  of which, all warnings", totals["before"], totals["after"],
-                  totals["after"] - totals["before"]))
     else:
-        for label in ("Image size (bytes)", "CVEs (unique)", "Hadolint warnings (filtered)"):
+        for label in ("Image size (bytes)", "CVEs (unique)", "Hadolint warnings (total)"):
             print(f"| {label:<34} | {'skipped':>14} | {'skipped':>14} | {'—':>13} |")
     print(row("Logical instructions", len(before), len(after), d_instr))
     print(bar)

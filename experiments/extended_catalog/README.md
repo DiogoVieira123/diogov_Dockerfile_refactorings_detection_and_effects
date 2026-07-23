@@ -22,7 +22,11 @@ Each experiment compares two functionally equivalent states of a Dockerfile — 
 three quality metrics used throughout the dissertation:
 
 1. **Image size** (bytes) — `docker image inspect`
-2. **Maintainability as smells** — Hadolint warnings (count and exact codes)
+2. **Maintainability as smells** — Hadolint warnings total: the count of
+   findings within the unified maintainability filter (47 rules drawn from the
+   maintainability categories of the Hadolint wiki — reproducibility,
+   structural correctness, usage and notation, metadata, shell SC2046/SC2086,
+   and logs DL3047 — identical across every verification script)
 3. **Security** — CVEs reported by Trivy
 
 Hadolint and Trivy are run as official Docker containers (`hadolint/hadolint`,
@@ -45,7 +49,7 @@ degrade that dimension.
 
 ## Summary of results
 
-| Refactoring | Image size (Delta) | Hadolint (filtered) | CVEs | Logical instructions | Measured benefit |
+| Refactoring | Image size (Delta) | Warnings total (maintainability filter) | CVEs | Logical instructions | Measured benefit |
 |---|---|---|---|---|---|
 | R06 Inline Stage | +116 B | 0 -> 0 | 0 -> 0 | 8 -> 5 (-3) | none measurable on size, CVEs or warnings; structural reduction |
 | R09 Extract RUN Instructions | +417 B | 0 -> 0 | 0 -> 0 | 5 -> 6 (+1) | none measurable; structural cost of the extraction |

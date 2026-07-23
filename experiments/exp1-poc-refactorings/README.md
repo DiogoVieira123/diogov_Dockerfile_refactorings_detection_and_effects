@@ -12,17 +12,24 @@ affect more than one dimension, while others affect only one.
 Each refactoring is applied in isolation to a minimal Dockerfile pair (`before/`
 and `after/`). Both images are built, and three metrics are measured for each
 side: image size in bytes through the Docker SDK, security vulnerabilities
-through Trivy, and structural warnings through Hadolint. The delta for each
-metric is the after value minus the before value.
+through Trivy, and the warnings total through Hadolint — in the PoCs this
+counts **every** finding the linter reports, with no rule filter. The delta for
+each metric is the after value minus the before value.
 
 ## Result
 
 | PoC | Delta Size (bytes) | Delta Warnings | Delta CVEs | Delta Instr |
 |---|---|---|---|---|
-| R01 Inline RUN Instructions | -194,991 | +0 | +0 | -3 |
+| R01 Inline RUN Instructions | -194,991 | -7 | +0 | -3 |
 | R02 Update Base Image TAG | -11,845,577 | -1 | -26 | +0 |
 | R10 Update Base Image | -26,318,550 | +0 | -15 | +0 |
 | R08 Replace ADD with COPY | +3 | -1 | +0 | +0 |
+
+Delta Warnings is the unfiltered warnings total: every Hadolint finding counts,
+with no rule filter. For R01 the -7 covers the elimination of DL3059 (3 -> 0)
+plus the reduction of DL3008/DL3015 occurrences when the four RUN instructions
+collapse into one; the raw outputs are in each PoC's
+`before/hadolint-before.json` and `after/hadolint-after.json`.
 
 The refactorings differ in profile. PoC-1 affects performance and maintainability;
 PoC-3 affects performance and security simultaneously, with a large reduction in
@@ -52,9 +59,9 @@ directory and run one per PoC:
 
 For each PoC the script rebuilds the `before/` and `after/` images with
 `--no-cache`, re-measures the four indicators (image size via the Docker SDK,
-Trivy CVEs, Hadolint warnings, logical instruction count), computes the Delta
-for each, and compares every Delta against the value reported above, printing
-`OK` or `DIFF` per line. If Docker requires elevated privileges, prefix the
+Trivy CVEs, Hadolint warnings total — every finding, unfiltered — and the
+logical instruction count), computes the Delta for each, and compares every
+Delta against the value reported above, printing `OK` or `DIFF` per line. If Docker requires elevated privileges, prefix the
 command with `sudo`.
 
 Note on PoC-2: the `before` image uses the mutable `ubuntu:latest` tag, which

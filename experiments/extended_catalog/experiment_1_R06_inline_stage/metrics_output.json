@@ -11,7 +11,6 @@
   "before": {
     "logical_instructions": 8,
     "stages": 2,
-    "warnings_filtered": 0,
     "warnings_total": 0,
     "size_bytes": 3632710,
     "cves_unique": 0
@@ -19,14 +18,13 @@
   "after": {
     "logical_instructions": 5,
     "stages": 1,
-    "warnings_filtered": 0,
     "warnings_total": 0,
     "size_bytes": 3632826,
     "cves_unique": 0
   },
   "definitions": {
     "delta_instr": "Logical instructions via dockerfile-parse, COMMENT excluded, read from the Dockerfile text. An instruction spanning several physical lines through backslash continuations counts as one.",
-    "delta_warnings": "Hadolint warnings restricted to DL3007 and DL3020, the rules mapping to catalogue refactorings that carry maintainability as a dimension. warnings_total is context, not the metric.",
+    "delta_warnings": "Warnings total: Hadolint findings within the unified maintainability rule set of the Hadolint wiki (reproducibility, structural correctness, usage and notation, metadata, shell SC2046/SC2086, logs DL3047 \u2014 47 codes, identical across all verification scripts).",
     "delta_size_bytes": "Image size via the Docker SDK, in bytes.",
     "delta_cves": "Distinct VulnerabilityID values reported by Trivy, not occurrences.",
     "sign": "delta = after - before. For delta_instr the sign is read against the operation applied: consolidation reduces the count, extraction increases it, and neither is a verdict on its own."

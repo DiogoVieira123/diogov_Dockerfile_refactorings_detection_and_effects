@@ -28,7 +28,7 @@ Both states are built and measured on the three dissertation metrics:
 | Metric | Tool | How |
 |---|---|---|
 | Image size (bytes) | Docker | `docker image inspect --format '{{.Size}}'` (final runtime image) |
-| Maintainability (Hadolint warnings) | `hadolint/hadolint` container | static analysis of the Dockerfile(s) |
+| Maintainability (Hadolint warnings total, unified maintainability filter — 47 rules) | `hadolint/hadolint` container | static analysis of the Dockerfile(s) |
 | Security (CVEs) | `aquasec/trivy` container | scan of the built runtime image |
 
 These three metrics establish whether the refactoring introduces any **regression** in
@@ -71,7 +71,8 @@ Extractor component described in Section 5.7 of the dissertation.
    - a `--no-cache` build of the BEFORE multi-stage Dockerfile;
    - a `--no-cache` build of the extracted builder (`Dockerfile.builder`, tagged
      `r11-builder`), followed by the main AFTER Dockerfile that uses it;
-   - the four measurements (image size, Trivy CVEs, Hadolint warnings, logical
+   - the four measurements (image size, Trivy CVEs, Hadolint warnings total
+     under the unified maintainability filter, logical
      instruction count) on each state;
    - the computation of the Delta (AFTER - BEFORE) for each metric;
    - a comparison of every measured Delta against the value reported in the
@@ -107,7 +108,7 @@ Measured on 2026-06-29 (Ubuntu, base image `alpine:3.20`):
 |---|---|---|---|
 | Image size (bytes) | 3,632,723 | 3,632,724 | +1 |
 | CVEs (unique) | 0 | 0 | +0 |
-| Hadolint warnings (DL3007, DL3020) | 0 | 0 | +0 |
+| Hadolint warnings (total, maintainability filter) | 0 | 0 | +0 |
 | Logical instructions | 8 | 9 | +1 |
 | Stages | 2 | 3 | +1 |
 | Logical instructions (main Dockerfile only) | 8 | 5 | -3 |

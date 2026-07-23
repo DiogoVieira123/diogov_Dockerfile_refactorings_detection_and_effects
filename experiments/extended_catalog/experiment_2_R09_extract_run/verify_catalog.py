@@ -25,7 +25,29 @@ BEFORE_DF = HERE / "Dockerfile.before"
 AFTER_DFS = [HERE / p for p in ['Dockerfile.after']]
 CONTEXT_BEFORE = HERE / "."
 CONTEXT_AFTER = HERE / "."
-HADOLINT_FILTER = ['DL3007', 'DL3020']
+# Global, unified maintainability filter — identical in every verification
+# script. It is the full maintainability rule set of the Hadolint wiki:
+# reproducibility (16), structural correctness (15), usage & notation (12),
+# metadata (1), shell/ShellCheck (2), logs (1).
+HADOLINT_FILTER = [
+    # Reproducibility
+    "DL3005", "DL3006", "DL3007", "DL3008", "DL3013", "DL3016", "DL3017",
+    "DL3018", "DL3028", "DL3031", "DL3033", "DL3035", "DL3037", "DL3039",
+    "DL3041", "DL3062",
+    # Structural correctness
+    "DL3000", "DL3003", "DL3011", "DL3012", "DL3021", "DL3022", "DL3023",
+    "DL3024", "DL3043", "DL3044", "DL3045", "DL3061", "DL3063", "DL4003",
+    "DL4004",
+    # Usage and notation
+    "DL3001", "DL3010", "DL3014", "DL3025", "DL3027", "DL3029", "DL3030",
+    "DL3034", "DL3038", "DL4001", "DL4005", "DL4006",
+    # Metadata
+    "DL4000",
+    # Shell (ShellCheck)
+    "SC2046", "SC2086",
+    # Logs
+    "DL3047",
+]
 REPORTED = {'delta_instr': 1, 'delta_size': 417, 'delta_cves': 0, 'delta_warnings': 0}
 TAG = "verify-exp-r09"
 
@@ -58,11 +80,12 @@ def unique_cves(report):
     return len(ids)
 
 
-def filtered_warnings(dockerfile):
+def warnings_total(dockerfile):
+    """Warnings total: Hadolint findings within the maintainability rule set."""
     raw = sh(["docker", "run", "--rm", "-i", "hadolint/hadolint",
               "hadolint", "--format", "json", "-"], stdin=dockerfile.read_bytes())
     codes = [i.get("code") for i in json.loads(raw.decode() or "[]")]
-    return sum(codes.count(c) for c in HADOLINT_FILTER), len(codes)
+    return sum(1 for c in codes if c in HADOLINT_FILTER)
 
 
 def row(label, before, after, delta):
@@ -88,7 +111,7 @@ def main():
 
     if have_docker:
         print("\n  Building both states with --no-cache. This takes a minute.")
-        sizes, cves, warns, totals = {}, {}, {}, {}
+        sizes, cves, warns = {}, {}, {}
         for label, dockerfile, ctx in (("before", BEFORE_DF, CONTEXT_BEFORE),
                                        ("after", AFTER_DFS[0], CONTEXT_AFTER)):
             build = subprocess.run(
@@ -107,7 +130,7 @@ def main():
                          "aquasec/trivy", "image", "--quiet", "--format", "json",
                          f"{TAG}:{label}"])
             cves[label] = unique_cves(json.loads(report.decode() or "{}"))
-            warns[label], totals[label] = filtered_warnings(dockerfile)
+            warns[label] = warnings_total(dockerfile)
 
         if have_docker:
             measured.update(delta_size=sizes["after"] - sizes["before"],
@@ -121,12 +144,10 @@ def main():
         print(row("Image size (bytes)", f"{sizes['before']:,}",
                   f"{sizes['after']:,}", measured["delta_size"]))
         print(row("CVEs (unique)", cves["before"], cves["after"], measured["delta_cves"]))
-        print(row("Hadolint warnings (filtered)", warns["before"], warns["after"],
+        print(row("Hadolint warnings (total)", warns["before"], warns["after"],
                   measured["delta_warnings"]))
-        print(row("  of which, all warnings", totals["before"], totals["after"],
-                  totals["after"] - totals["before"]))
     else:
-        for label in ("Image size (bytes)", "CVEs (unique)", "Hadolint warnings (filtered)"):
+        for label in ("Image size (bytes)", "CVEs (unique)", "Hadolint warnings (total)"):
             print(f"| {label:<34} | {'skipped':>14} | {'skipped':>14} | {'—':>13} |")
     print(row("Logical instructions", len(before), len(after), d_instr))
     print(bar)

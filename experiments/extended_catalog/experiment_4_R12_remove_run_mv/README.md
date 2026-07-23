@@ -28,7 +28,7 @@ Both images are built and measured on the three dissertation metrics:
 | Metric | Tool | How |
 |---|---|---|
 | Image size (bytes) | Docker | `docker image inspect --format '{{.Size}}'` |
-| Maintainability (Hadolint warnings) | `hadolint/hadolint` container | static analysis of the Dockerfile |
+| Maintainability (Hadolint warnings total, unified maintainability filter — 47 rules) | `hadolint/hadolint` container | static analysis of the Dockerfile |
 | Security (CVEs) | `aquasec/trivy` container | scan of the built image |
 | Structure (stages + instructions) | static count | counts `FROM` stages and total instructions in each Dockerfile |
 
@@ -69,7 +69,8 @@ Anyone can replicate this experiment by following these exact steps.
 4. The script performs, automatically:
    - a `--no-cache` build of both Dockerfiles (so the measurement is not affected
      by cached layers);
-   - the four measurements (image size, Trivy CVEs, Hadolint warnings, logical
+   - the four measurements (image size, Trivy CVEs, Hadolint warnings total
+     under the unified maintainability filter, logical
      instruction count) on each state;
    - the computation of the Delta (AFTER - BEFORE) for each metric;
    - a comparison of every measured Delta against the value reported in the
@@ -107,7 +108,7 @@ Measured on 2026-06-29 (Ubuntu, base image `alpine:3.20`):
 |---|---|---|---|
 | Image size (bytes) | 3,634,927 | 3,633,596 | -1,331 |
 | CVEs (unique) | 0 | 0 | +0 |
-| Hadolint warnings (DL3007, DL3020) | 0 | 0 | +0 |
+| Hadolint warnings (total, maintainability filter) | 0 | 0 | +0 |
 | Logical instructions | 8 | 6 | -2 |
 | Stages | 1 | 1 | +0 |
 

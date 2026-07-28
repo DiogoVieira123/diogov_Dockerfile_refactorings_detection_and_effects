@@ -1,0 +1,19 @@
+EXP-F · R08 Replace ADD with COPY · Performance
+  before: 3,632,098
+  after:  3,632,099
+  delta:  +1
+  tools:  docker=29.1.3 trivy=0.72.0 trivy-db=v2@2026-07-27T19:20:18Z hadolint=2.14.0 dockerfile-parse=2.0.1
+  measured_utc: 2026-07-27T21:47:08Z
+  base_digest: sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+
+metric: ΔSize — bytes (Docker SDK)
+base image: alpine:3.20
+controlled: same source file (a regular file, not an archive), same destination
+
+logged for the record (not the result of this experiment):
+  size:     3,632,098 -> 3,632,099 (+1 bytes)
+  cves:     0 -> 0 (+0)
+  warnings: 0 -> 0 (47-rule screen)
+  instr:    2 -> 2 (+0)
+
+replicate: sh run_experiment.sh

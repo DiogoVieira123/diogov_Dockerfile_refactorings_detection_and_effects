@@ -176,7 +176,7 @@ def main():
         print("\n  A difference here is not necessarily an error. Image sizes and CVE")
         print("  counts depend on the base image and on the Trivy vulnerability")
         print("  database at the time of measurement. The digests and tool versions")
-        print("  behind the reported values are in reset_total/out/environment.json.")
+        print("  behind the reported values are recorded in metrics_output.json.")
     print()
 
 

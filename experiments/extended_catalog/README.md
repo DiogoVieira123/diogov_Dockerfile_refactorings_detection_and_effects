@@ -54,9 +54,9 @@ Measured 2026-07-27 · docker=29.1.3 · trivy=0.72.0 · trivy-db=v2@2026-07-27T1
 
 Rules covered: R01–R09, R11–R14. R13 and R14 are each measured on two dimensions
 (experiments 12/13 and 14/15). Experiments 06, 09, 10 and 11 record all four
-indicators from a single run of the pair; the remaining experiments record the
-indicator of the dimension they target, with the other values kept in the
-folder's `result.txt` for the record.
+indicators from a single run of the pair, in `metrics_output.json`; every other
+experiment reports strictly and only the indicator of the dimension named in its
+folder, in `result.txt`.
 
 ### Base images
 

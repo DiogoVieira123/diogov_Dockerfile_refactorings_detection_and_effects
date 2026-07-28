@@ -10,10 +10,4 @@ metric: ΔSize — bytes (Docker SDK)
 base image: alpine:3.20
 controlled: same source file (a regular file, not an archive), same destination
 
-logged for the record (not the result of this experiment):
-  size:     3,632,098 -> 3,632,099 (+1 bytes)
-  cves:     0 -> 0 (+0)
-  warnings: 0 -> 0 (47-rule screen)
-  instr:    2 -> 2 (+0)
-
 replicate: sh run_experiment.sh

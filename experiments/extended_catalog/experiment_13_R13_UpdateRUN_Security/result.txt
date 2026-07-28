@@ -10,12 +10,6 @@ metric: ΔCVEs — distinct VulnerabilityID (Trivy, final image)
 base image: debian:12-slim
 controlled: identical package set and versions; only physical layout differs
 
-logged for the record (not the result of this experiment):
-  size:     61,626,013 -> 61,626,085 (+72 bytes)
-  cves:     146 -> 146 (+0)
-  warnings: 0 -> 0 (47-rule screen)
-  instr:    2 -> 2 (+0)
-
 baseline: 146 CVEs in the before state — non-zero, so an unchanged
 count is a meaningful result (N -> N, as the protocol requires).
 

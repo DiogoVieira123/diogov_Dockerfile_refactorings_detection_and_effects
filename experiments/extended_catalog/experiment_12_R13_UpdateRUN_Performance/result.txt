@@ -10,10 +10,4 @@ metric: ΔSize — bytes (Docker SDK)
 base image: alpine:3.20
 controlled: identical package set and versions; only the physical layout changes
 
-logged for the record (not the result of this experiment):
-  size:     11,100,915 -> 11,100,931 (+16 bytes)
-  cves:     0 -> 0 (+0)
-  warnings: 0 -> 0 (47-rule screen)
-  instr:    2 -> 2 (+0)
-
 replicate: sh run_experiment.sh

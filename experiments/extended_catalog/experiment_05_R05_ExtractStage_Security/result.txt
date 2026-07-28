@@ -11,10 +11,6 @@ base images: before = rust:1.78 (full toolchain) | after = rust:1.78 builder + a
 controlled: same application built by the same toolchain; only the multi-stage
             separation of build environment from runtime environment differs
 
-logged for the record (not the result of this experiment):
-  size:     526,780,268 -> 3,824,781 (-522,955,487 bytes)
-  cves:     6,162 -> 0 (-6,162)
-
 baseline: 6,162 CVEs in the before state — non-zero, so the change is a
 meaningful result rather than an absence of data.
 

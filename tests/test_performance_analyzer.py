@@ -1,27 +1,23 @@
 """Unit tests for the Performance Analyzer (RF4, RNF1, RNF4).
 
-The measurement logic, the cleanup guarantees and the exception contract are
-exercised against a fake Docker client, so the suite runs without a daemon.
-The one test that needs a real daemon builds two Alpine images end to end and
-is skipped when Docker is not reachable.
+The component measures images the preparation phase already built, so the
+measurement logic and the exception contract run against a fake Docker client
+and need no daemon. The end-to-end test builds two real images through
+``image_builder`` and is skipped when Docker is not reachable.
 """
-
-import io
-import tarfile
 
 import docker
 import pytest
 
+from src.image_builder import build_image_pair
 from src.performance_analyzer import (
     PerformanceAnalyzerError,
     SizeMetric,
-    _context_archive,
     measure_size_delta,
-    measured_image_pair,
 )
 
-DOCKERFILE_BEFORE = "FROM ubuntu:22.04\nCMD [\"sh\"]\n"
-DOCKERFILE_AFTER = "FROM alpine:3.19\nCMD [\"sh\"]\n"
+IMAGE_BEFORE = "sha256:imagebefore"
+IMAGE_AFTER = "sha256:imageafter"
 
 # Reference values of the PoC-3 acceptance criterion for RF4/RNF1.
 POC3_SIZE_BEFORE = 29_748_045
@@ -32,33 +28,32 @@ POC3_SIZE_AFTER = 3_429_495
 
 
 class FakeImage:
-    def __init__(self, image_id: str, size):
-        self.id = image_id
+    def __init__(self, size):
         self.attrs = {} if size is None else {"Size": size}
 
 
 class FakeImages:
-    """Stands in for client.images, recording what the analyzer asked of it."""
+    """Stands in for client.images, serving sizes by image reference."""
 
     def __init__(self, sizes, failure=None):
-        self._sizes = list(sizes)
-        self._failure = failure  # exception raised on the second build
-        self.builds = []  # kwargs of every build call
-        self.removed = []  # ids passed to remove()
+        self._sizes = sizes  # reference -> size
+        self._failure = failure  # exception raised by get()
+        self.requested = []
 
-    def build(self, **kwargs):
-        self.builds.append(kwargs)
-        if self._failure is not None and len(self.builds) == 2:
+    def get(self, reference):
+        self.requested.append(reference)
+        if self._failure is not None:
             raise self._failure
-        size = self._sizes[len(self.builds) - 1]
-        return FakeImage(f"sha256:image{len(self.builds)}", size), []
+        if reference not in self._sizes:
+            raise docker.errors.ImageNotFound(f"no such image: {reference}")
+        return FakeImage(self._sizes[reference])
 
-    def remove(self, image_id, force=False):
-        self.removed.append(image_id)
+    def build(self, **kwargs):  # pragma: no cover — must never be called
+        raise AssertionError("the Performance Analyzer must not build images")
 
 
 class FakeClient:
-    def __init__(self, sizes=(1, 2), failure=None):
+    def __init__(self, sizes, failure=None):
         self.images = FakeImages(sizes, failure)
         self.closed = False
 
@@ -70,11 +65,10 @@ class FakeClient:
 def fake_docker(monkeypatch):
     """Install a fake client and hand the test a factory to configure it."""
 
-    created = {}
-
-    def install(sizes=(POC3_SIZE_BEFORE, POC3_SIZE_AFTER), failure=None):
+    def install(sizes=None, failure=None):
+        if sizes is None:
+            sizes = {IMAGE_BEFORE: POC3_SIZE_BEFORE, IMAGE_AFTER: POC3_SIZE_AFTER}
         client = FakeClient(sizes, failure)
-        created["client"] = client
         monkeypatch.setattr(docker, "from_env", lambda: client)
         return client
 
@@ -98,8 +92,7 @@ def test_size_metric_is_expressed_only_in_bytes():
 def test_size_metric_keeps_byte_resolution_for_micro_variations():
     # RNF1: the +417 bytes of the R09 experiment must survive intact, where
     # CLI rounding would report zero.
-    metric = SizeMetric.from_sizes(3_633_775, 3_634_192)
-    assert metric.delta_size == 417
+    assert SizeMetric.from_sizes(3_633_775, 3_634_192).delta_size == 417
 
 
 def test_size_metric_delta_is_signed_after_minus_before():
@@ -117,71 +110,31 @@ def test_size_metric_tolerates_a_zero_before_size():
 
 def test_measure_size_delta_returns_both_sizes_and_the_delta(fake_docker):
     fake_docker()
-    metric = measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER)
+    metric = measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
     assert metric.size_before == POC3_SIZE_BEFORE
     assert metric.size_after == POC3_SIZE_AFTER
     assert metric.delta_size == -26_318_550
 
 
-def test_measured_image_pair_exposes_the_image_ids(fake_docker):
-    # The Data Extractor scans these images rather than rebuilding them.
+def test_measurement_inspects_exactly_the_two_images_it_was_given(fake_docker):
+    client = fake_docker()
+    measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
+    assert client.images.requested == [IMAGE_BEFORE, IMAGE_AFTER]
+
+
+def test_the_component_never_builds_anything(fake_docker):
+    # Building belongs to the preparation phase; the fake asserts on any call.
     fake_docker()
-    with measured_image_pair(DOCKERFILE_BEFORE, DOCKERFILE_AFTER) as (
-        metric,
-        id_before,
-        id_after,
-    ):
-        assert metric.delta_size == -26_318_550
-        assert id_before != id_after
+    measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
 
 
-def test_build_sends_an_in_memory_context_and_not_a_path(fake_docker):
+def test_the_component_leaves_both_images_in_place(fake_docker):
+    # Removal is the preparation phase's responsibility: the Data Extractor
+    # runs in parallel and needs the same images.
     client = fake_docker()
-    measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER)
-    assert len(client.images.builds) == 2
-    for call in client.images.builds:
-        assert call["custom_context"] is True
-        assert isinstance(call["fileobj"], io.BytesIO)
-        assert "path" not in call  # never a directory handed to the daemon
-        assert call["tag"].islower()  # Docker rejects upper case in tags
-
-
-# --- Resource cleanup -----------------------------------------------------------
-
-
-def test_both_images_are_removed_after_a_successful_measurement(fake_docker):
-    client = fake_docker()
-    measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER)
-    assert client.images.removed == ["sha256:image1", "sha256:image2"]
+    measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
+    assert not hasattr(client.images, "removed")
     assert client.closed
-
-
-def test_the_first_image_is_removed_when_the_second_build_fails(fake_docker):
-    # The leak that would otherwise fill the disk over a catalogue-wide run.
-    client = fake_docker(failure=docker.errors.BuildError("boom", build_log=[]))
-    with pytest.raises(PerformanceAnalyzerError):
-        measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER)
-    assert client.images.removed == ["sha256:image1"]
-
-
-def test_images_are_removed_when_the_caller_raises_inside_the_context(fake_docker):
-    client = fake_docker()
-    with pytest.raises(ValueError):
-        with measured_image_pair(DOCKERFILE_BEFORE, DOCKERFILE_AFTER):
-            raise ValueError("caller failed mid-analysis")
-    assert client.images.removed == ["sha256:image1", "sha256:image2"]
-
-
-def test_a_failing_removal_does_not_mask_the_original_error(fake_docker):
-    client = fake_docker(failure=docker.errors.BuildError("boom", build_log=[]))
-
-    def refuse(image_id, force=False):
-        raise docker.errors.APIError("daemon refused the removal")
-
-    client.images.remove = refuse
-    # The build failure must surface, not the cleanup failure.
-    with pytest.raises(PerformanceAnalyzerError, match="build"):
-        measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER)
 
 
 # --- Exception contract (RNF4) --------------------------------------------------
@@ -193,93 +146,32 @@ def test_unreachable_daemon_raises_performance_analyzer_error(monkeypatch):
 
     monkeypatch.setattr(docker, "from_env", unavailable)
     with pytest.raises(PerformanceAnalyzerError, match="Docker daemon"):
-        measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER)
+        measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
 
 
-def test_build_failure_names_the_offending_state(fake_docker):
-    fake_docker(failure=docker.errors.BuildError("invalid instruction", build_log=[]))
+def test_an_unknown_image_names_the_offending_state(fake_docker):
+    fake_docker(sizes={IMAGE_BEFORE: POC3_SIZE_BEFORE})  # the after image is missing
     with pytest.raises(PerformanceAnalyzerError, match="'after'"):
-        measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER)
+        measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
 
 
-def test_api_error_during_build_raises_performance_analyzer_error(fake_docker):
+def test_api_error_during_inspection_raises_performance_analyzer_error(fake_docker):
     fake_docker(failure=docker.errors.APIError("daemon went away"))
     with pytest.raises(PerformanceAnalyzerError, match="daemon error"):
-        measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER)
+        measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
 
 
 def test_missing_size_attribute_raises_performance_analyzer_error(fake_docker):
-    fake_docker(sizes=(POC3_SIZE_BEFORE, None))
+    fake_docker(sizes={IMAGE_BEFORE: POC3_SIZE_BEFORE, IMAGE_AFTER: None})
     with pytest.raises(PerformanceAnalyzerError, match="inspect the size"):
-        measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER)
+        measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
 
 
 def test_non_integer_size_raises_performance_analyzer_error(fake_docker):
     # A string size is exactly what the rejected CLI path would deliver.
-    fake_docker(sizes=(POC3_SIZE_BEFORE, "3.4MB"))
+    fake_docker(sizes={IMAGE_BEFORE: POC3_SIZE_BEFORE, IMAGE_AFTER: "3.4MB"})
     with pytest.raises(PerformanceAnalyzerError, match="integer byte count"):
-        measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER)
-
-
-def test_a_context_path_that_is_not_a_directory_is_rejected(tmp_path):
-    missing = tmp_path / "no-such-context"
-    with pytest.raises(PerformanceAnalyzerError, match="not a directory"):
-        measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER, context_path=missing)
-
-
-# --- Build context assembly -----------------------------------------------------
-
-
-def _archive_names(stream: io.BytesIO):
-    with tarfile.open(fileobj=stream, mode="r") as archive:
-        return set(archive.getnames())
-
-
-def test_context_archive_carries_the_dockerfile_content():
-    stream = _context_archive(DOCKERFILE_AFTER, None)
-    with tarfile.open(fileobj=stream, mode="r") as archive:
-        extracted = archive.extractfile("Dockerfile").read().decode("utf-8")
-    assert extracted == DOCKERFILE_AFTER
-
-
-def test_context_archive_includes_the_context_files(tmp_path):
-    (tmp_path / "app.txt").write_text("payload", encoding="utf-8")
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "setup.sh").write_text("#!/bin/sh\n", encoding="utf-8")
-
-    names = _archive_names(_context_archive(DOCKERFILE_AFTER, tmp_path))
-    assert names == {"Dockerfile", "app.txt", "scripts/setup.sh"}
-
-
-def test_context_archive_replaces_a_dockerfile_found_in_the_context(tmp_path):
-    # The state under analysis wins over whatever sits in the directory.
-    (tmp_path / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
-    stream = _context_archive(DOCKERFILE_AFTER, tmp_path)
-    with tarfile.open(fileobj=stream, mode="r") as archive:
-        assert archive.getnames().count("Dockerfile") == 1
-        content = archive.extractfile("Dockerfile").read().decode("utf-8")
-    assert content == DOCKERFILE_AFTER
-
-
-def test_context_archive_excludes_repository_metadata(tmp_path):
-    (tmp_path / ".git").mkdir()
-    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
-    (tmp_path / "app.txt").write_text("payload", encoding="utf-8")
-
-    assert _archive_names(_context_archive(DOCKERFILE_AFTER, tmp_path)) == {
-        "Dockerfile",
-        "app.txt",
-    }
-
-
-def test_measuring_writes_nothing_to_the_working_directory(fake_docker, tmp_path):
-    (tmp_path / "app.txt").write_text("payload", encoding="utf-8")
-    before = {entry.name for entry in tmp_path.iterdir()}
-
-    fake_docker()
-    measure_size_delta(DOCKERFILE_BEFORE, DOCKERFILE_AFTER, context_path=tmp_path)
-
-    assert {entry.name for entry in tmp_path.iterdir()} == before
+        measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
 
 
 # --- Integration: requires a running Docker daemon --------------------------------
@@ -297,17 +189,12 @@ def _daemon_available() -> bool:
 
 @pytest.mark.skipif(not _daemon_available(), reason="Docker daemon not reachable")
 def test_end_to_end_against_a_real_daemon():
-    """RF4 end to end: two real builds, a real byte delta, no image left behind."""
+    """RF4 end to end: the preparation phase builds, the analyzer measures."""
     before = "FROM alpine:3.20\nRUN echo before > /marker\n"
     after = "FROM alpine:3.20\nRUN echo after-with-more-content > /marker\n"
 
-    client = docker.from_env()
-    images_before_run = {image.id for image in client.images.list()}
-
-    metric = measure_size_delta(before, after)
+    with build_image_pair(before, after) as pair:
+        metric = measure_size_delta(pair.image_before, pair.image_after)
 
     assert metric.size_before > 0 and metric.size_after > 0
     assert metric.delta_size == metric.size_after - metric.size_before
-    # Nothing the analysis built survives it.
-    assert {image.id for image in client.images.list()} == images_before_run
-    client.close()

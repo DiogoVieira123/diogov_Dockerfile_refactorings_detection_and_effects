@@ -5,24 +5,33 @@ or non-trivial problem. Feeds the thesis Implementation chapter (Chapter 6).
 
 ---
 
-## 2026-08-08 — Performance Analyzer (RF4, RNF1, RNF4)
+## 2026-08-08 — Stage 2 preparation phase: image builder (RNF4)
 
-**Purpose.** Third component of the pipeline, running in parallel with the Data
-Extractor. It receives the two Dockerfile states from the VCS Connector, builds
-the Docker image for each, and returns the signed size delta between them.
+**Purpose.** Build the two Docker images that Stage 2 consumes, before Stage 2
+begins. Owned by the pipeline orchestrator, not by either Stage 2 component.
 
 **Technology.** Docker SDK for Python 7.1.0 (`docker==7.1.0`, added to
-`requirements.txt`), validated in Experiment 4. Size is read from
-`image.attrs["Size"]` — the VirtualSize, the total uncompressed byte count of
-all image layers, as a 64-bit integer.
+`requirements.txt`), validated in Experiment 4.
 
-**Reason for the choice.** The Docker CLI was rejected at design time: it
-applies decimal rounding and human-readable truncation by design (Docker issue
-#31298), which would collapse the micro-variations the catalogue produces —
-the +417 bytes of R09, the +1 byte of R08 — to zero and violate RNF1. The SDK
-queries the daemon API endpoint directly and returns the raw integer.
+**Reason for the choice — why the build is a phase and not a component's job.**
+Stage 2 runs the Performance Analyzer and the Data Extractor in parallel, and
+neither may depend on the other. Both nonetheless need the same resource: the
+Performance Analyzer reads the size of each built image, and the Data Extractor
+scans those images with Trivy (Table 4.9, step 3b). Leaving the build inside
+either component would make the other wait on it, turning a parallel stage into
+a sequential one; giving each component its own build would duplicate the most
+expensive operation in the pipeline. Lifting the build into a preparation phase
+resolves both: the images exist before Stage 2 starts, and the two components
+consume them independently and concurrently.
 
 **Key design decisions.**
+
+*References, not objects.* `BuiltImagePair` carries image IDs as strings, not
+SDK objects. The Stage 2 components each open their own Docker connection and
+look the images up by ID, so they share no client, no connection and no object
+graph with this phase or with each other. The only thing crossing the boundary
+is an identifier, consumed read-only on both sides — which is what makes their
+independence structural rather than a matter of convention.
 
 *In-memory build context.* The build context is assembled as a tar archive in
 `io.BytesIO` and handed to the daemon as a byte stream (`custom_context=True`),
@@ -40,88 +49,46 @@ a COPY — which is most of the catalogue — would fail. The optional
 accompany both builds, and `.git`, `__pycache__`, `.venv` and `node_modules`
 are excluded from it.
 
-*Guaranteed cleanup.* Every image the component builds is removed before it
-returns, in a `finally` block that covers all three failure shapes: a second
-build that fails after the first succeeded, an exception raised by the caller
-inside the context manager, and an ordinary return. Without this a
+*Guaranteed cleanup.* Both images are removed when the preparation context
+closes, in a `finally` block that covers all three failure shapes: a second
+build that fails after the first succeeded, an exception raised by either Stage
+2 component inside the block, and an ordinary return. Without this a
 catalogue-wide run would leave dozens of images behind and exhaust the daemon's
 storage. Removal errors are swallowed deliberately, because an exception raised
 during cleanup would mask the failure that triggered it.
-
-*Two entry points.* `measured_image_pair` is the primitive: a context manager
-that builds both states, yields the metric together with the two image IDs, and
-removes them on exit. `measure_size_delta` is the thin wrapper that returns the
-metric alone. The pair exists because the Data Extractor scans the built images
-with Trivy (Table 4.9, step 3b); running inside the context manager lets that
-component reach the same images instead of rebuilding them, while the images
-still cannot outlive the analysis.
 
 *`pull=False`.* The base image is not re-pulled, so both states build against
 the same locally cached base. This is what keeps the two measurements
 comparable: a tag that moved upstream between the two builds would otherwise
 contaminate the delta with a change that is not the refactoring's.
 
-*The delta is expressed in bytes alone.* `SizeMetric` carries `size_before`,
-`size_after` and `delta_size`, all in bytes. The sign convention is the study's:
-`size_after - size_before`, so a negative delta is a size reduction. Measuring
-in bytes alone is what keeps the four metrics uniform: ΔCVEs, ΔWarnings and
-ΔInstr are absolute signed counts, so a relative figure on this one would hand
-the Report Generator a metric in a different form from its three siblings. A
-percentage remains derivable from the two absolute sizes by whoever needs it,
-without the component committing the pipeline to it.
-
 *`docker_engine_version()`.* RNF5 requires the report to record the version of
-every external tool invoked, including the Docker Engine, but that version is
-only reachable through a Docker client and this component owns that connection.
-Exposing it as a function gives the Report Generator the seam it needs without
-this component taking on report responsibilities.
+every external tool invoked, including the Docker Engine. The preparation phase
+is where the Docker environment is established, so it is where that version is
+read and handed to the Report Generator.
 
-**Problems and solutions — a one-byte divergence from the recorded R09 value.**
-Measuring the R09 catalogue pair with the finished component returned
-3,633,775 → 3,634,193 (+418 bytes), against the +417 recorded in
-`experiments/extended_catalog/experiment_09_R09_ExtractRUN/`. The investigation
-established that this is environmental and not a defect of the component:
+*A distinct exception type.* Preparation failures raise `ImageBuildError`, not
+the `PerformanceAnalyzerError` of the measurement component. RNF4 asks for
+distinct informative exceptions, and the two failures are genuinely different
+events: a build that does not complete aborts the analysis before Stage 2, and
+a size that cannot be inspected fails one metric of a stage already running.
 
-- `size_before` matches the recorded 3,633,775 exactly, which confirms the
-  build context assembly, the base image and the size retrieval are correct;
-- building the same pair through the Docker CLI in the same environment
-  (`DOCKER_BUILDKIT=0 docker build --no-cache`, the experiment's own command)
-  returns the identical 3,634,193, so the SDK and the CLI agree byte for byte
-  and the divergence is not attributable to the retrieval method;
-- `git status` and `git log` show `setup.sh`, `app.txt` and both Dockerfiles
-  unmodified since the commit that recorded the value, so the inputs are the
-  originals.
-
-The remaining variable is the Docker Engine, now 29.1.3, which serialises the
-layer of the after state one byte differently from the version in use when the
-experiment was recorded. No experiment file was altered: the recorded value
-documents the environment of its own run, which is precisely what RNF5 exists
-to make visible. Build cache was ruled out as a factor — a cached layer has the
-same size as a freshly built one, and the CLI comparison above ran with
-`--no-cache` while the SDK measurement ran with cache enabled, both returning
-3,634,193.
-
-**Testing.** 24 tests in `tests/test_performance_analyzer.py`. The measurement
-logic, the cleanup guarantees and the exception contract run against a fake
-Docker client, so the suite needs no daemon; one end-to-end test builds two real
+**Testing.** 18 tests in `tests/test_image_builder.py`, running against a fake
+Docker client so the suite needs no daemon; one end-to-end test builds two real
 Alpine images and is skipped when Docker is unreachable.
 
-- RF4/RNF1 computation: the PoC-3 reference delta (29,748,045 → 3,429,495 =
-  −26,318,550 bytes), the +417 byte micro-variation of R09 surviving intact,
-  the signed convention in all three directions, a zero before size, and the
-  metric carrying byte fields only.
-- Cleanup: both images removed after success, the first removed when the second
-  build fails, both removed when the caller raises inside the context manager,
-  and a failing removal not masking the original error.
+- Building: both references yielded, identifiers rather than SDK objects, the
+  context sent as an in-memory stream and never as a path, lower-case tags, and
+  the Engine version reported for RNF5.
+- Cleanup: both images removed when the context closes and still present while
+  it is open, the first removed when the second build fails, both removed when
+  a Stage 2 component raises, and a failing removal not masking the original
+  error.
 - RNF4 contract: unreachable daemon, build failure naming the offending state,
-  API error, missing `Size` attribute, a non-integer size (what the rejected CLI
-  path would deliver), and a context path that is not a directory.
+  API error, and a context path that is not a directory.
 - Context assembly: the Dockerfile content travels intact, context files and
   subdirectories are included, a `Dockerfile` in the context is superseded,
-  `.git` is excluded, and measuring writes nothing to the working directory.
-
-Full suite: **144 passed, 2 skipped** on Windows; **23 passed** for this module
-under WSL with the daemon reachable, including the end-to-end build.
+  `.git` is excluded, and building writes nothing to the working directory.
 
 **Most relevant snippet.**
 
@@ -134,12 +101,121 @@ under WSL with the daemon reachable, including the end-to-end build.
         image_after = _build_image(client, dockerfile_after, resolved_context, "after")
         built.append(image_after)
 
-        metric = SizeMetric.from_sizes(
-            _image_size(image_before, "before"), _image_size(image_after, "after")
-        )
-        yield metric, image_before.id, image_after.id
+        yield BuiltImagePair(image_before=image_before.id, image_after=image_after.id)
     finally:
         _remove_images(client, built)
+```
+
+---
+
+## 2026-08-08 — Performance Analyzer (RF4, RNF1, RNF4)
+
+**Purpose.** Stage 2 component, running in parallel with the Data Extractor. It
+receives the references to the two images the preparation phase built and
+returns the signed size delta between them.
+
+**Technology.** Docker SDK for Python 7.1.0, validated in Experiment 4. Size is
+read from `image.attrs["Size"]` — the VirtualSize, the total uncompressed byte
+count of all image layers, as a 64-bit integer.
+
+**Reason for the choice.** The Docker CLI was rejected at design time: it
+applies decimal rounding and human-readable truncation by design (Docker issue
+#31298), which would collapse the micro-variations the catalogue produces —
+the +417 bytes of R09 — to zero and violate RNF1. The SDK queries the daemon
+API endpoint directly and returns the raw integer.
+
+**Key design decisions.**
+
+*The component measures and nothing else.* It does not build, does not remove,
+and never reads a value produced by the Data Extractor: ΔSize is computed from
+the two images alone, just as ΔCVEs, ΔWarnings and ΔInstr are computed without
+ΔSize. That mutual independence is what allows the two Stage 2 components to
+run concurrently. The module holds no state and opens its own Docker
+connection rather than receiving one, so it shares no mutable object with its
+sibling.
+
+*The delta is expressed in bytes alone.* `SizeMetric` carries `size_before`,
+`size_after` and `delta_size`, all in bytes. The sign convention is the study's:
+`size_after - size_before`, so a negative delta is a size reduction. Measuring
+in bytes alone is what keeps the four metrics uniform: ΔCVEs, ΔWarnings and
+ΔInstr are absolute signed counts, so a relative figure on this one would hand
+the Report Generator a metric in a different form from its three siblings. A
+percentage remains derivable from the two absolute sizes by whoever needs it,
+without the component committing the pipeline to it.
+
+**Problems and solutions — image size is not bit-for-bit reproducible.**
+Measuring the R09 catalogue pair repeatedly returned deltas of +414, +416,
++417, +418 and +419 bytes across runs, against the +417 recorded in
+`experiments/extended_catalog/experiment_09_R09_ExtractRUN/`. The cause is not
+the component: four consecutive `DOCKER_BUILDKIT=0 docker build --no-cache`
+runs through the Docker CLI — the experiment's own command, with no code of
+this prototype involved — produced
+
+| run | before | after | delta |
+|---|---|---|---|
+| 1 | 3,633,776 | 3,634,193 | +417 |
+| 2 | 3,633,775 | 3,634,191 | +416 |
+| 3 | 3,633,776 | 3,634,192 | +416 |
+| 4 | 3,633,774 | 3,634,193 | +419 |
+| recorded | 3,633,775 | 3,634,192 | +417 |
+
+Each absolute size varies within a band of about 2 bytes and the delta within
+about 3, and the recorded values sit inside those bands. Docker Engine 29.1.3
+on WSL2 therefore does not produce a byte-identical image from byte-identical
+inputs. A trivially simple Dockerfile does reproduce exactly; the variation
+appears with builds that copy from a context and write files in a RUN layer.
+
+Three consequences follow, none of which the component can remove:
+
+1. The design chapter states that image size is "a deterministic function of
+   the Dockerfile content and the base image state, producing the same byte
+   count for the same inputs every time". At byte resolution that is not what
+   this environment does, and the sentence overstates the guarantee.
+2. RNF1's byte-level precision is a property of the *retrieval* method, and it
+   holds: the SDK returns exact integers where the CLI would round. What does
+   not hold is byte-level *reproducibility* of the measured object. The two are
+   distinct claims and only the first belongs to the Performance Analyzer.
+3. Deltas whose magnitude is within the noise band cannot be distinguished from
+   it. R09's +417 is two orders of magnitude above the band and stands
+   unaffected. R08's recorded +1 byte does not exceed it — the chapter already
+   classifies that result as neutral and "far below the relevance threshold",
+   so its interpretation is unchanged, but the figure should be read as
+   indistinguishable from zero rather than as a measured increase.
+
+No experiment file was altered. The recorded values remain valid single-run
+observations of the quantity they measure.
+
+**Testing.** 15 tests in `tests/test_performance_analyzer.py`, running against
+a fake Docker client so the suite needs no daemon; one end-to-end test builds
+two real images through the preparation phase and is skipped when Docker is
+unreachable.
+
+- RF4/RNF1 computation: the PoC-3 reference delta (29,748,045 → 3,429,495 =
+  −26,318,550 bytes), the +417 byte micro-variation of R09 surviving intact,
+  the signed convention in all three directions, a zero before size, and the
+  metric carrying byte fields only.
+- Stage 2 boundaries: exactly the two given images are inspected, the fake
+  client asserts on any build call so the component provably never builds, and
+  both images are left in place for the Data Extractor running alongside.
+- RNF4 contract: unreachable daemon, an unknown image naming the offending
+  state, API error, missing `Size` attribute, and a non-integer size (what the
+  rejected CLI path would deliver).
+
+Full suite: **152 passed, 3 skipped** on Windows; **33 passed** for both Stage 2
+modules under WSL with the daemon reachable, including the end-to-end builds.
+
+**Most relevant snippet.**
+
+```python
+    client = _connect()
+    try:
+        return SizeMetric.from_sizes(
+            _image_size(client, image_before, "before"),
+            _image_size(client, image_after, "after"),
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            client.close()
 ```
 
 ---

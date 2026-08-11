@@ -8,10 +8,111 @@ a false positive is a rule failure, not a near-miss.
 import pytest
 
 from src.detection_engine import (
+    _RULES,
+    DetectionResult,
     DockerfileParseError,
+    Instruction,
     detect_refactorings,
     parse_instructions,
+    rule,
 )
+
+
+# --- RNF3: a new rule reaches the registry without editing the engine ----------
+
+
+@pytest.fixture
+def registry_restored():
+    """Restore the rule registry after a test has added to it.
+
+    The registry is module state shared by every test in this file, so a rule
+    left behind would leak into all of them. The snapshot is taken by value and
+    the list is repaired in place, which keeps the identity the ``@rule``
+    decorator closes over.
+    """
+    snapshot = list(_RULES)
+    try:
+        yield
+    finally:
+        _RULES[:] = snapshot
+
+
+def test_rnf3_a_new_rule_is_exercised_end_to_end_without_editing_the_engine(
+    registry_restored,
+):
+    """RNF3 acceptance criterion, exercised rather than asserted.
+
+    A rule defined entirely here — outside `src/detection_engine.py` — is
+    registered through the public decorator and must be run by the engine and
+    reported like any catalogue rule. Nothing in the production module is
+    touched, which is the Open-Closed Principle the requirement demands: the
+    engine is open to new rules and closed to modification.
+    """
+    rules_before = len(_RULES)
+
+    @rule
+    def detect_mock_healthcheck_added(instructions_a, instructions_b):
+        """Fictitious rule: a HEALTHCHECK appears where there was none."""
+        if any(e.instruction == "HEALTHCHECK" for e in instructions_a):
+            return None
+        added = [e for e in instructions_b if e.instruction == "HEALTHCHECK"]
+        if not added:
+            return None
+        return DetectionResult(
+            refactoring_id="R99",
+            refactoring_name="Add HEALTHCHECK (test rule)",
+            instructions_before=(),
+            instructions_after=tuple(added),
+        )
+
+    # 1. The decorator alone put it in the registry.
+    assert len(_RULES) == rules_before + 1
+    assert _RULES[-1] is detect_mock_healthcheck_added
+
+    # 2. The engine runs it end to end and reports it.
+    detections = detect_refactorings(
+        "FROM alpine:3.20\nCMD [\"sh\"]\n",
+        "FROM alpine:3.20\nHEALTHCHECK CMD wget -q -O- http://localhost/ || exit 1\nCMD [\"sh\"]\n",
+    )
+    reported = [d.refactoring_id for d in detections]
+    assert "R99" in reported
+
+    detection = next(d for d in detections if d.refactoring_id == "R99")
+    assert detection.refactoring_name == "Add HEALTHCHECK (test rule)"
+    assert detection.instructions_after == (
+        Instruction("HEALTHCHECK", "CMD wget -q -O- http://localhost/ || exit 1"),
+    )
+
+    # 3. The new rule takes the last registry position, so the order in which
+    #    the catalogue rules are reported is unchanged by its addition.
+    assert reported[-1] == "R99"
+
+
+def test_rnf3_the_existing_rules_keep_working_alongside_a_new_one(registry_restored):
+    """Adding a rule must not disturb the ones already registered."""
+    baseline = [
+        d.refactoring_id for d in detect_refactorings(R01_BEFORE, R01_AFTER)
+    ]
+
+    @rule
+    def detect_always(instructions_a, instructions_b):
+        return DetectionResult("R99", "Always fires (test rule)", (), ())
+
+    with_new_rule = [
+        d.refactoring_id for d in detect_refactorings(R01_BEFORE, R01_AFTER)
+    ]
+    assert with_new_rule == baseline + ["R99"]
+
+
+def test_rnf3_the_registry_is_restored_between_tests():
+    """The fixture's cleanup holds: no test rule survives into this one."""
+    assert "R99" not in [
+        d.refactoring_id
+        for d in detect_refactorings(
+            "FROM alpine:3.20\n",
+            "FROM alpine:3.20\nHEALTHCHECK CMD true\n",
+        )
+    ]
 
 
 # --- RNF4: malformed content raises a specific exception -----------------------
@@ -192,6 +293,28 @@ def test_r02_preserves_platform_flag_and_alias():
         "FROM --platform=$BUILDPLATFORM node:20-alpine AS base\nCMD [\"node\"]\n",
     )
     assert [d.refactoring_id for d in detections] == ["R02"]
+
+
+def test_r02_detects_a_tag_added_to_a_digest_pinned_base():
+    # A FROM may carry both a digest and a tag. Adding the tag while the digest
+    # stays identical preserves the entity, so it is a tag update like any
+    # other; the digest must survive the parse rather than being read as part
+    # of the image name.
+    detections = detect_refactorings(
+        "FROM alpine@sha256:abc123 AS build\nCMD [\"sh\"]\n",
+        "FROM alpine:3.20@sha256:abc123 AS build\nCMD [\"sh\"]\n",
+    )
+    assert [d.refactoring_id for d in detections] == ["R02"]
+
+
+def test_r02_not_triggered_when_the_digest_itself_changes():
+    # A different digest is a different image, so entity preservation fails and
+    # the change is not a tag update however the tag moves.
+    detections = detect_refactorings(
+        "FROM alpine:3.19@sha256:abc123\nCMD [\"sh\"]\n",
+        "FROM alpine:3.20@sha256:def456\nCMD [\"sh\"]\n",
+    )
+    assert "R02" not in [d.refactoring_id for d in detections]
 
 
 def test_r02_detected_despite_noise_in_other_instructions():
@@ -1123,6 +1246,16 @@ def test_r09_detects_when_the_script_lands_in_a_directory():
         R09_AFTER.replace("COPY setup.sh /app/setup.sh", "COPY setup.sh /app/").replace(
             "RUN /app/setup.sh", "RUN sh setup.sh"
         ),
+    )
+    assert "R09" in [d.refactoring_id for d in detections]
+
+
+def test_r09_detects_a_script_invoked_by_relative_path():
+    # "RUN ./setup.sh" is the third invocation form, alongside the absolute
+    # path and the interpreter call: the leading "./" must be stripped before
+    # the script is matched, without disturbing an absolute path's own slash.
+    detections = detect_refactorings(
+        R09_BEFORE, R09_AFTER.replace("RUN /app/setup.sh", "RUN ./setup.sh")
     )
     assert "R09" in [d.refactoring_id for d in detections]
 

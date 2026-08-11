@@ -3,6 +3,623 @@
 Chronological record of the prototype implementation, one entry per component
 or non-trivial problem. Feeds the thesis Implementation chapter (Chapter 6).
 
+## Test inventory — current state
+
+The entries below are a diary: each records the suite size at the time it was
+written, so the figures inside them grow as the work progressed and are not
+meant to be read as current. This table is the single current inventory,
+measured on 2026-08-11.
+
+| Module / Component | Test file | Tests | Notes |
+|---|---|---:|---|
+| VCS Connector | `test_vcs_connector.py` | 8 | RF1, RNF4 |
+| VCS Connector (integration) | `test_vcs_connector_getting_started.py` | 1 | Experiment 3 replication; skipped unless `GETTING_STARTED_REPO` is set |
+| Detection Engine | `test_detection_engine.py` | 119 | 111 across R01–R14, 8 cross-cutting (RNF3 ×3, parsing ×5) |
+| Image builder (Stage 2 preparation) | `test_image_builder.py` | 18 | RNF4 |
+| Performance Analyzer | `test_performance_analyzer.py` | 15 | RF4, RNF1, RNF4 |
+| Data Extractor | `test_data_extractor.py` | 43 | RF5, RF6, RNF2, RNF4, RNF5. 41 functions; one is parametrised over 3 cases |
+| Report Generator | `test_report_generator.py` | 35 | RF7, RNF5 |
+| **Total** | | **239 collected** | **235 passing, 4 skipped** |
+
+Per rule in the Detection Engine: R01 9, R02 16, R03 9, R04 6, R05 5, R06 6,
+R07 6, R08 10, R09 10, R10 7, R11 6, R12 7, R13 7, R14 7.
+
+The four skipped tests are the end-to-end ones, each guarded by a `skipif`: the
+Experiment 3 replication needs a local clone of `docker/getting-started`, and
+the image builder, Performance Analyzer and Data Extractor end-to-end tests need
+a reachable Docker daemon. All four run and pass under WSL2 with the daemon
+available; the skips are a property of the Windows host, not of the tests.
+
+Package coverage: 98% (780 statements, 15 uncovered).
+
+---
+
+## Detection Engine — RNF3 extensibility, acceptance criterion exercised
+
+* **Date:** 2026-08-10
+* **Requirement:** RNF3 — "a new detection rule can be added to the registry and
+  exercised end to end without editing any existing rule or any downstream
+  component".
+* **Status:** Proven by test. No production change was made.
+
+The registry mechanism — the `@rule` decorator appending to `_RULES` — had been
+in place since the first rule and all fourteen catalogue rules were added
+through it, but nothing exercised the criterion itself. Three tests now do,
+all in `tests/test_detection_engine.py`:
+
+* `test_rnf3_a_new_rule_is_exercised_end_to_end_without_editing_the_engine`
+  defines a fictitious rule (`R99 — Add HEALTHCHECK`) entirely inside the test
+  file, registers it through the public decorator, and asserts three things:
+  that the decorator alone placed it in the registry, that `detect_refactorings`
+  runs and reports it against a real Dockerfile pair, and that it takes the last
+  registry position so the reporting order of the catalogue rules is undisturbed
+  by its addition.
+* `test_rnf3_the_existing_rules_keep_working_alongside_a_new_one` covers the
+  other half of the criterion. It measures the detection of the R01 pair before
+  registering a new rule and after, and requires
+  `with_new_rule == baseline + ["R99"]`: adding a rule must neither alter nor
+  suppress any existing one.
+* `test_rnf3_the_registry_is_restored_between_tests` verifies the isolation
+  holds, running without the fixture and requiring that no `R99` survives.
+
+A `registry_restored` fixture snapshots `_RULES` by value and repairs the list
+**in place** (`_RULES[:] = snapshot`) in its `finally`. Repairing in place rather
+than rebinding matters: the `@rule` decorator closes over that list object, so
+replacing it would break registration for the remainder of the session.
+
+Conformance was verified rather than asserted: `git diff` and `git status`
+against `src/detection_engine.py` are both empty, so no line of the production
+module was touched, which is the Open-Closed Principle the requirement demands.
+Isolation was confirmed twice — by the third test, and by an external check that
+runs the whole suite and then imports the engine, finding 14 registered rules
+and no residual `R99`. The suite also passes with `-p no:randomly`, ruling out
+order dependence.
+
+This closes the gap the conformance audit had recorded against RNF3, which had
+the mechanism in place but the criterion unexercised.
+
+---
+
+## 2026-08-11 — Coverage audit: confirmation and one correction
+
+**Purpose.** Re-run the coverage suite and confirm the figures previously
+recorded, checking specifically whether the uncovered lines are still the ones
+described.
+
+**Result — figures confirmed, unchanged.**
+
+| Module | Stmts | Miss | Cover | Missing |
+|---|---|---|---|---|
+| `data_extractor.py` | 121 | 2 | 98% | 373–374 |
+| `detection_engine.py` | 422 | 13 | 97% | 96–97, 164, 292, 306, 311, 353, 385, 391, 729, 902, 1015, 1090 |
+| `image_builder.py` | 80 | 2 | 98% | 256–257 |
+| `performance_analyzer.py` | 38 | 0 | 100% | — |
+| `report_generator.py` | 94 | 0 | 100% | — |
+| `vcs_connector.py` | 25 | 0 | 100% | — |
+| **Package** | **780** | **17** | **98%** | |
+
+232 tests passing, 4 skipped, at the moment of this measurement — the figure
+before the three tests added below, which took it to the current 235.
+
+**Data Extractor — confirmed as recorded.** Lines 373–374 are exactly the
+`except Exception` guarding the dockerfile-parse call and the
+`DataExtractorError` it raises. They remain the module's only uncovered
+statements, and the earlier audit established the branch is unreachable in
+practice because dockerfile-parse does not raise on malformed content: it
+accepts arbitrary text and treats the first word of each line as an
+instruction.
+
+**Correction — the package figure has a different composition.** The
+module-level attribution to a single unreachable `except` holds for the Data
+Extractor, but does not generalise to the package. Classifying all 17
+uncovered statements:
+
+* *Unreachable in practice (4).* `data_extractor.py` 373–374 and
+  `detection_engine.py` 96–97, both the same `except` around dockerfile-parse.
+* *Reachable only through an external fault (2).* `image_builder.py` 256–257,
+  the handler for a daemon that answers but reports no version.
+* *Reachable, working, and untested (2) — since closed, see below.*
+  * `detection_engine.py` 164 — digest parsing in `_parse_from_value`.
+    `FROM alpine@sha256:abc123 AS build` resolves to
+    `name='alpine' digest='sha256:abc123' alias='build'`, and R02 fires
+    correctly on a digest-pinned FROM that gains a tag. No test covered a
+    digest-pinned base image anywhere in the suite.
+  * `detection_engine.py` 385 — the `./script.sh` invocation form in
+    `_invokes_script`. R09 detects correctly when the extracted script is
+    called as `RUN ./setup.sh` rather than by absolute path. No test used that
+    form.
+* *Rule guard branches (9).* `detection_engine.py` 292, 306, 311, 353, 391,
+  729, 902, 1015 and 1090, defensive `return None` and `continue` statements
+  inside individual rules. Not individually exercised; no claim is made here
+  that they are unreachable, only that no test reaches them.
+
+**Significance.** The two reachable-and-untested lines were the finding worth
+recording. They are not defensive code: they implement behaviour the engine
+relies on — digest-pinned base images and the relative invocation form — and a
+regression in either would have passed the suite silently.
+
+**Gap closed.** Three tests were added to `tests/test_detection_engine.py`, in
+the sections of the rules they concern, with no production change:
+
+* `test_r02_detects_a_tag_added_to_a_digest_pinned_base` — a FROM carrying both
+  a digest and a tag, where the tag is added and the digest is unchanged, so
+  the entity is preserved and R02 fires. This is what exercises line 164: the
+  digest must survive the parse rather than being read as part of the image
+  name.
+* `test_r02_not_triggered_when_the_digest_itself_changes` — the negative
+  counterpart, added alongside because a rule that fires on digest-pinned
+  images needs its boundary pinned too: a different digest is a different
+  image, so entity preservation fails and no tag update is reported.
+* `test_r09_detects_a_script_invoked_by_relative_path` — `RUN ./setup.sh`, the
+  third invocation form alongside the absolute path and the interpreter call,
+  exercising line 385.
+
+**Resulting figures.** `detection_engine.py` from 13 uncovered statements to
+11, the package from 17 to 15. The package percentage stays at 98% and the
+Data Extractor at 98% with lines 373–374, both unchanged. 235 tests passing, 4
+skipped.
+
+**No regression from the previous record.** The percentages and missing-line
+sets before these additions were identical to those logged for the Report
+Generator entry of 2026-08-11. The correction above concerns how the figure was
+characterised, not the figure itself.
+
+---
+
+## 2026-08-11 — Report Generator (RF7, RNF5) + system-wide conformance verification
+
+**Purpose.** Implement the terminal pipeline stage as three written artifacts,
+and verify every component against the design chapter, including the exact
+delta nomenclature.
+
+### Task 1 — Report Generator
+
+**Outputs.** `generate_report()` writes, into a caller-supplied directory:
+
+* `impact_report.json` — before and after value of every metric, the four
+  deltas, the per-severity CVE vector, the reproducibility block, and pointers
+  to the retained artifacts;
+* `raw_data/trivy_raw.json` and `raw_data/hadolint_raw.json` — the source
+  analysis artifacts the Data Extractor retained, each keyed by state so the
+  before and after evidence stay distinguishable;
+* `human_readable_summary.txt` — the same content arranged for direct review.
+
+**Key design decisions.**
+
+*Aggregation, not interpretation.* The component pairs the catalogue identifier
+of each detection with the four measured deltas exactly as obtained, adding no
+expected direction, no dimensional label and no judgement. A test enforces this
+negatively, asserting the serialised report contains none of "performance",
+"security", "maintainability", "improvement", "degradation", "expected",
+"better" or "worse" outside the sign-convention note.
+
+*Deltas are carried, not recomputed.* Each delta comes from the component that
+measured it. Two independent computations of one quantity could disagree, and
+the measuring component is the authority on its own metric.
+
+*Artifacts beside the report, not inside it.* The retained Trivy output runs to
+tens of kilobytes — 50,648 bytes for the R09 pair — so embedding it would bury
+the structured output. The JSON references the files by name and they live one
+directory away, which keeps the report readable while the evidence stays with
+it. Each file is a single JSON document keyed by state, with each state's text
+embedded as a parsed value rather than a quoted string, so the artifact stays
+machine-readable end to end. Output that does not parse is kept as a raw string
+rather than discarded: a tool emitting something unexpected must not cost the
+evidence.
+
+*One derivation, two formats.* `to_text` reads the report's own fields and
+recomputes nothing, so the JSON and the summary cannot drift apart. A test
+tampers with a field and asserts the tampered value reaches the summary.
+
+*LF endings everywhere.* Every artifact is written UTF-8 with LF, so a report
+produced on Windows is byte-identical to one produced on Linux and a re-run can
+be compared with `diff`.
+
+*An empty detection list is a valid report.* No supported refactoring
+recognised is a result, not a failure: the section is empty and the four
+metrics are still measured and reported.
+
+**Testing.** 35 tests, 100% coverage of the module. Beyond the metric and
+RNF5 content: the three artifacts written to the expected paths, the output
+directory created when absent, one raw file per tool, both states
+distinguishable inside each, the retained findings accounting for the counted
+values, non-JSON output preserved, the JSON pointing at the raw files, the
+summary naming them, and LF endings in both text artifacts.
+
+**Full pipeline verification.** Run end to end against the R09 catalogue pair
+under WSL with a real daemon: detection, build, both Stage 2 components
+dispatched concurrently, and the report. Produced `R09 Extract RUN
+Instructions` with ΔSize +416, ΔCVEs +0, ΔWarnings +0, ΔInstr +1, an
+environment block naming Docker Engine 29.1.3, Hadolint 2.14.0, Trivy 0.72.0,
+Trivy database 2026-08-11T19:13:09Z and dockerfile-parse 2.0.1, and 50,648
+bytes of Trivy evidence plus 34 bytes of Hadolint evidence under `raw_data/`.
+ΔSize differs from the recorded +417 by the environmental variation documented
+in the Performance Analyzer entry.
+
+A transient Trivy database download failure during the first attempt surfaced
+as `DataExtractorError` naming the failing scan, which is the RNF4 contract
+behaving as specified against a real fault rather than a simulated one.
+
+### Task 2 — Conformance verification
+
+Verified programmatically against `DESIGN_CHAPTER.md` rather than by reading.
+
+**Correction applied.** The Data Extractor exposed its instruction delta as
+`delta_instructions` while RF7 names it `delta_logical_instructions`. Renamed
+across the component and its tests, so the name is identical from the point of
+measurement to the point of serialisation.
+
+**Verified conformant.**
+
+| Component | Checked | Result |
+|---|---|---|
+| VCS Connector | RF1 blob-level access, no working tree | conformant |
+| Detection Engine | RF2, RF3, RNF3; 14 rules in a declarative registry | conformant |
+| Performance Analyzer | RNF1: `image.attrs["Size"]` via the SDK, no CLI | conformant — no `subprocess` in the module |
+| Data Extractor | Section 4.6 retention of raw artifacts | conformant — `raw_trivy`, `raw_hadolint` |
+| Report Generator | RF7 structured output, RNF5 provenance | conformant |
+| All components | RF1 single-file scope | no Dockerfile discovery anywhere |
+
+**Discrepancies left standing, both documentation-side.**
+
+*`delta_hadolint`.* RF7 lists the delta keys as `delta_size, delta_warnings,
+delta_hadolint, delta_logical_instructions`. There is no `delta_hadolint`
+quantity in the design — the four metrics are size, CVEs, warnings and logical
+instructions — and the list has no key for CVEs at all. The author identified
+this as an error in the chapter text on 2026-08-07 and approved `delta_cves` in
+the code, which is what the code emits. Implementing the literal chapter name
+would encode a known error and leave the CVE delta unnamed, so it was not done.
+The chapter line remains to be retouched.
+
+*`SizeMetric`.* Table 4.10 describes the Performance Analyzer as outputting
+`MetricSet_A, MetricSet_B (size in bytes)`, while the code names that structure
+`SizeMetric`. Renaming it to `MetricSet` would collide with the Data
+Extractor's `MetricSet`, which carries entirely different fields, and the two
+would have to be disambiguated by module at every use in the Report Generator.
+The distinct name was kept for clarity and is recorded here as a deliberate
+divergence from the table's wording rather than from its meaning.
+
+**Suite.** 235 tests passing, 4 skipped on Windows. Package coverage 98%.
+
+---
+
+## Component and Integration Testing Strategy
+
+Dedicated unit tests were implemented for each individual pipeline component to
+validate its isolated behavior, complemented by integration tests verifying the
+correct interaction and data flow between modules. This structured testing
+approach guarantees the internal integrity of the execution pipeline and
+ensures strict compliance with all functional and non-functional requirements.
+
+---
+
+## Design Decision & Scope — Single-Dockerfile Refactoring Focus & Future Roadmap
+
+* **Date:** 2026-08-10
+* **Context:** Scope definition of the Detection Engine and evolution strategy.
+* **Architectural decision:** The prototype and its implemented rule set
+  (R01–R14) focus explicitly on **single-Dockerfile refactorings**.
+* **Technical justification:**
+  * The overwhelming majority of the catalogue's rules — R01, the consolidation
+    of RUN instructions, among them — operate in isolation over the internal
+    structure of a single Dockerfile, detecting and optimising local
+    improvements in syntax and organisation.
+  * The exclusive focus on a single Dockerfile is a conscious scope limitation,
+    designed to cut ambiguity off at the root and guarantee the reliability of
+    the current prototype.
+  * While the generality of the rules covers local transformations, more
+    complex structural operations — such as R11, Move Stage, which extracts a
+    build stage into a separate Dockerfile — evidence the transition to
+    multi-file scenarios. Cases involving the simultaneous, coordinated or
+    interdependent refactoring of several Dockerfiles in one commit demand a
+    relational analysis complexity that exceeds the scope of this research
+    prototype.
+* **Roadmap (future work):**
+  * Expansion of the architecture to support repositories with **multiple
+    Dockerfiles**, natively covering inter-file refactoring operations such as
+    R11.
+  * Implementation of explicit file mapping mechanisms (*input mapping*) to
+    resolve ambiguities in complex repositories.
+  * Evolution of the detection engine to support coordinated relational
+    analysis across different Dockerfiles within a single commit.
+
+**Verified against the implementation.** The decision matches the code as
+built. `detect_refactorings(dockerfile_a, dockerfile_b)` takes two strings and
+nothing else; all fourteen rule functions receive exactly two instruction
+lists, one per state of one file; and the engine performs no filesystem access
+at all, so a second Dockerfile is unreachable rather than merely unused. The
+same property holds downstream in the Data Extractor, whose ΔInstr consequence
+for R11 is recorded in the *Edge Case: Divergence in Experiment R11* entry of
+that component's section, and in Section 4.9 of the thesis.
+
+---
+
+## Requirement Resolution — RF5 acceptance criteria aligned with Appendix C
+
+* **Date:** 2026-08-10
+* **Status:** Resolved — no code change required.
+* **Finding that prompted it:** The conformance audit reported that the RF5
+  acceptance criterion "PoC-4 test — correctly computes the warning delta,
+  yielding −1 for DL3020" cannot be satisfied by the implementation, because
+  DL3020 is absent from the 47-rule maintainability screen.
+* **Resolution:** The code stands exactly as it was. It already honoured the
+  architectural design: Appendix C derives the screen by dimensional exclusion,
+  removing the rules that target security surfaces so that the maintainability
+  metric does not duplicate what ΔCVEs already measures, and DL3020 — the
+  security smell of ADD — is excluded by that criterion. The divergence was in
+  the requirement text, which carried an acceptance criterion predating the
+  screen, and the reference to PoC-4 (DL3020) was removed from the manuscript.
+* **Criteria that remain and are met:** PoC-2, ΔWarnings = −1 for DL3007, a
+  rule the screen does contain, covered by
+  `test_eliminating_one_rule_violation_yields_a_delta_of_minus_one`; and PoC-3,
+  the CVE delta read from the Trivy JSON.
+* **Repository note:** `DESIGN_CHAPTER.md`, the Markdown working copy of the
+  chapter held in this repository, still carries the PoC-4 sentence at line 132
+  and has not yet received the same edit as the manuscript.
+
+---
+
+## 2026-08-10 — Data Extractor: retention of source analysis artifacts (RNF5)
+
+**Purpose.** Retain the raw JSON that Hadolint and Trivy emit, rather than
+discarding it once the counts have been taken.
+
+**Reason.** RNF5 requires reproducibility to rest not only on recorded tool
+versions but on "the capability to retain the source analysis artifacts
+generated by external tools during the extraction phase", and names the
+retained artifacts in its acceptance criterion. The conformance audit found
+this the one acceptance criterion unmet in code: the component counted the
+findings and let the output go.
+
+**Key design decisions.** `ExtractionResult` gains `raw_hadolint` and
+`raw_trivy`, each a mapping from state to the tool's output text. The text is
+decoded from the bytes the tool wrote and kept verbatim; it is never
+re-serialised from the parsed object, which would silently normalise key order
+and whitespace and stop it being the artifact. Retaining it costs nothing at
+extraction time, since `_run` already returns the bytes and the parsed object
+was built from them.
+
+**Testing.** Three tests: both states present for both tools with the text
+matching what the tool emitted; a deliberately quirky payload — unusual spacing
+and reversed key order — surviving byte for byte while still parsing to the
+right count; and the retained text accounting for exactly the identifiers that
+were counted. Verified against the real tools on the R09 catalogue pair, which
+retained 24,227 and 24,470 bytes of Trivy output for the two states. Module
+suite at 41 tests, 98% coverage; full suite 197 passing, 4 skipped.
+
+**Downstream note.** The acceptance criterion asks that every generated report
+*contain* the retained artifacts. The Report Generator was removed on
+2026-08-10 at the author's instruction, so the artifacts are retained and
+exposed at the component boundary but not yet carried into a report. The
+criterion is therefore satisfied in the extraction phase and pending in the
+reporting phase.
+
+**Most relevant snippet.**
+
+```python
+        raw_hadolint={
+            "before": outputs["lint_before"].decode("utf-8", errors="replace"),
+            "after": outputs["lint_after"].decode("utf-8", errors="replace"),
+        },
+        raw_trivy={
+            "before": outputs["scan_before"].decode("utf-8", errors="replace"),
+            "after": outputs["scan_after"].decode("utf-8", errors="replace"),
+        },
+```
+
+---
+
+## 2026-08-10 — Data Extractor: audit follow-ups (RNF4, RNF5)
+
+**Purpose.** Close the three findings of the Data Extractor audit.
+
+**Problems and solutions.**
+
+*Unhandled AttributeError on a malformed Trivy report.* The traversal of
+`Results` and `Vulnerabilities` assumed every nested member was an object, so a
+truncated report raised a raw `AttributeError` from the middle of the walk
+instead of the `DataExtractorError` that RNF4 requires of every external tool
+failure. The Hadolint side was already guarded; the Trivy side was not. The
+traversal is now wrapped, converting `AttributeError` and `TypeError` into a
+`DataExtractorError` naming the shape problem. Three parametrised regression
+tests cover a non-object result, a non-object vulnerability and an integer
+where a vulnerability was expected.
+
+*`tool_provenance()` untested.* The function that satisfies RNF5 had no test at
+all, which is the worst place in the module for a silent regression: a change
+to the `trivy version` schema would return the database version as "not yet
+downloaded" without anything failing, exactly as happened once during
+development. Six tests now cover it — all three versions reported, the query
+made against the shared database cache, an unpopulated cache reported as
+unavailable rather than invented, a missing docker command, malformed JSON and
+an unexpected shape.
+
+*A comment contradicting the code.* The comment above the tool image constants
+claimed they were pinned, while both are untagged and resolve to `:latest`. The
+images stay untagged, which is a deliberate choice to preserve exact parity with
+the extended-catalogue experiments — a pinned tag here would measure with a
+different tool build than the one that produced the recorded values — and the
+comment now states that choice, its cost, and the fact that `tool_provenance()`
+recording the version in every report is what compensates for it (RNF5).
+
+**Testing.** The module's suite grew from 29 to 40 tests, and its coverage from
+91% to 98%. The two statements still uncovered are the `except` around
+dockerfile-parse, which the audit established is unreachable in practice because
+the parser does not raise on malformed content.
+
+---
+
+## 2026-08-10 — Data Extractor (RF5, RF6, RNF2, RNF4, RNF5)
+
+**Purpose.** Stage 2 component, running in parallel with the Performance
+Analyzer. It receives the two Dockerfile states and the references to the two
+images the preparation phase built, and returns three signed deltas: ΔCVEs,
+ΔWarnings and ΔInstr.
+
+**Technology.** Trivy and Hadolint as containers (`aquasec/trivy`,
+`hadolint/hadolint`), validated in Experiment 2, plus dockerfile-parse 2.0.1
+for the instruction count. Both tools are invoked in JSON mode and their
+heterogeneous schemas are normalised here into one metric representation.
+
+**Reason for the choice.** The tools are invoked through the same commands the
+extended-catalogue experiments use, so the values this component produces are
+directly comparable with the recorded ones. This is the one place where the
+prototype shells out to the Docker CLI: the CLI was rejected for image size
+because it rounds, but nothing is being read from it here beyond a container's
+stdout, and matching the validated experiment protocol byte for byte is worth
+more than uniformity with the SDK used elsewhere.
+
+**Key design decisions.**
+
+*The component measures and nothing else.* It does not build images and does
+not remove them — both belong to the preparation phase — and the images arrive
+as identifiers consumed strictly read-only. It never reads a value produced by
+the Performance Analyzer: its three metrics are computed without ΔSize, just as
+ΔSize is computed without them. Tests assert the boundary directly, checking
+that no emitted command contains `build`, `rmi` or `remove`.
+
+*Independent parsing.* `count_logical_instructions` uses dockerfile-parse
+directly and imports nothing from the Detection Engine. The two have different
+obligations — the engine needs each instruction's keyword and argument string
+to decide a refactoring, this component needs only how many there are — and
+coupling them would let a change to detection move a maintainability metric. A
+test reads this module's own source and fails if the string `detection_engine`
+appears in it, so the coupling cannot reappear by oversight.
+
+*The 47-rule screen as a declarative list.* `MAINTAINABILITY_SCREEN` holds the
+Appendix C rules as data, inspectable and revisable without touching the
+parsing logic. Its contents were verified programmatically to be set-identical
+to the `HADOLINT_FILTER` of the catalogue verification scripts. Every finding
+of a screened rule counts, including repeated violations of the same rule on
+different lines: the metric is the global sum of maintainability violations,
+not the number of distinct rules violated.
+
+*Distinct identifiers, deduplicated globally.* RF5 counts distinct
+vulnerability identifiers rather than occurrences, so deduplication spans the
+whole Trivy report rather than each result: the same CVE reported for two
+packages contributes one identifier. The first severity seen for an identifier
+is the one kept, so a CVE listed twice cannot inflate a tier. A vulnerability
+whose severity is absent or outside the known tiers still counts towards the
+total, so the tiers never exceed it but may sum to less.
+
+*ΔCVEs by severity tier.* RF5 requires the CVE delta "by severity tier", so
+`delta_cves` is accompanied by `delta_cves_by_severity` across CRITICAL, HIGH,
+MEDIUM, LOW and UNKNOWN. The single total remains the headline figure the
+Report Generator aggregates.
+
+*Internal concurrency.* The four external invocations — two Trivy scans and two
+Hadolint analyses — are dispatched together, since none depends on another's
+result and the scans dominate elapsed time. Every future is resolved before the
+first failure is raised, so no container is left running behind an early
+return. The instruction count runs in-process and needs no container.
+
+*A shared Trivy database cache.* Trivy keeps its vulnerability database in a
+cache directory that a `--rm` container loses on exit. Without a persistent
+volume every scan re-downloads the database and, more importantly for RNF5,
+`trivy version` reports no database metadata at all — the first implementation
+returned the database version as "unknown" for exactly this reason. A named
+volume shared by the two scans and the version query fixes both: the database
+is downloaded once, and the version recorded is the one the measurements
+actually used. Verified end to end, `tool_provenance()` now reports
+`2026-08-10T01:00:06Z` rather than "unknown". The volume is a deliberate
+persistent resource, unlike the images, which are removed.
+
+*Hadolint reads from stdin.* The Dockerfile text is fed to the container rather
+than written to a file, so no temporary Dockerfile appears in the working
+directory and the text analysed is exactly the one the VCS Connector delivered.
+CRLF endings are normalised first, since blob content reflects whatever was
+committed.
+
+*Failure detection by output, not exit code.* Hadolint exits non-zero whenever
+it reports findings, which is the normal case here, so the exit code alone
+cannot signal failure. An empty stdout is what distinguishes a tool that ran
+from one that did not.
+
+**Validation against the catalogue.** The component was run over all fifteen
+controlled experiments in `experiments/extended_catalog/`, building each pair
+through the preparation phase. Four of them carry a recorded `metrics_output.json`:
+
+| experiment | ΔWarnings | ΔInstr | ΔCVEs |
+|---|---|---|---|
+| experiment_06_R06_InlineStage | +0 = +0 | −3 = −3 | +0 = +0 |
+| experiment_09_R09_ExtractRUN | +0 = +0 | +1 = +1 | +0 = +0 |
+| experiment_11_R12_RemoveRUNmv | +0 = +0 | −2 = −2 | +0 = +0 |
+| experiment_10_R11_MoveStage | +0 = +0 | **−3 vs +1** | +0 = +0 |
+
+Three reproduce the recorded values exactly. The fourth is recorded below.
+
+### Edge Case: Divergence in Experiment R11 (Move Stage)
+
+* **Date:** 2026-08-10
+* **Status:** Resolved by design limitation (RF1) — Documented in Section 4.9.
+* **Technical Summary:** The R11 refactoring (Move Stage) results in a
+  divergence specifically in instruction count (ΔInstr), registering −3 in the
+  prototype versus +1 in the global catalog ground truth. The catalog performs
+  project-level global accounting across both the original and the newly
+  extracted Dockerfile (`Dockerfile.builder`). Conversely, the prototype is
+  strictly bound by design requirement RF1 to track a single file path,
+  auditing exclusively the primary Dockerfile.
+* **Metric Scope Impact:** This scope limitation affects *exclusively* ΔInstr.
+  All other metrics for R11 — namely ΔWarnings (Hadolint) and ΔCVEs (Trivy) —
+  matched the expected baseline values precisely (`+0 = +0`).
+* **Comparative Context:** Refactorings like R09 (Extract RUN) show no
+  divergence because they offload logic to shell scripts (which do not count as
+  Dockerfile instructions), whereas R11 creates a separate Dockerfile.
+* **Decision:** Keep the single-file scope (RF1) as a deliberate architectural
+  choice to ensure a strictly deterministic measurement pipeline, avoiding
+  fragile heuristics for automatic satellite file aggregation.
+* **Action:** This behavior is consciously assumed as a structural property of
+  the prototype's scope and is documented in Section 4.9 of the thesis. No code
+  modifications are required.
+
+**Testing.** 29 tests in `tests/test_data_extractor.py`. The external tools are
+replaced by a fake `subprocess.run` serving recorded Trivy and Hadolint JSON, so
+the suite runs without a daemon and without pulling either tool image; one
+end-to-end test invokes the real containers against two real images and is
+skipped when Docker is unreachable.
+
+- The screen: exactly 47 distinct rules, the default-disabled DL3049–DL3058
+  excluded, only screened rules counted, repeated violations of one rule all
+  counted, and the PoC-2 criterion of −1 for an eliminated DL3007 (RNF2).
+- ΔCVEs: distinct identifiers counted once, per-tier reporting, an unknown
+  severity counting in the total but in no tier, and a clean image yielding
+  zero rather than an error when Trivy omits the vulnerability list entirely.
+- ΔInstr: comments excluded, a backslash-continued instruction counting as one,
+  CRLF tolerated, a single added instruction moving the delta by one (RNF2),
+  and the source proven free of any Detection Engine import.
+- Boundaries: no build or removal command emitted, both images scanned
+  read-only, the two scans sharing the database cache volume, and Hadolint
+  reading from stdin rather than a path.
+- RNF4 contract: a missing docker command, a tool timeout, empty output,
+  malformed JSON, an unexpected Trivy shape, an unexpected Hadolint shape,
+  non-string Dockerfile content, and parsing failing before any image is
+  scanned.
+- Deltas: all three signed after minus before, and zero deltas reported as a
+  result rather than an absence.
+
+Full suite: **180 passed, 4 skipped** on Windows; **29 passed** for this module
+under WSL with the tools reachable, including the end-to-end run.
+
+**Most relevant snippet.**
+
+```python
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {
+            "scan_before": pool.submit(_scan_image, image_before, "before"),
+            "scan_after": pool.submit(_scan_image, image_after, "after"),
+            "lint_before": pool.submit(_lint_dockerfile, dockerfile_a, "before"),
+            "lint_after": pool.submit(_lint_dockerfile, dockerfile_b, "after"),
+        }
+        outputs, failure = {}, None
+        for name, future in futures.items():
+            try:
+                outputs[name] = future.result()
+            except DataExtractorError as exc:
+                failure = failure or exc
+        if failure is not None:
+            raise failure
+```
+
 ---
 
 ## 2026-08-08 — Stage 2 preparation phase: image builder (RNF4)

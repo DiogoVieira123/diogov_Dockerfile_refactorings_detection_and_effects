@@ -181,7 +181,7 @@ def test_a_context_path_that_is_not_a_directory_is_rejected(tmp_path):
     missing = tmp_path / "no-such-context"
     with pytest.raises(ImageBuildError, match="not a directory"):
         with build_image_pair(
-            DOCKERFILE_BEFORE, DOCKERFILE_AFTER, context_path=missing
+            DOCKERFILE_BEFORE, DOCKERFILE_AFTER, context_before=missing
         ):
             pass
 
@@ -236,7 +236,9 @@ def test_building_writes_nothing_to_the_working_directory(fake_docker, tmp_path)
     before = {entry.name for entry in tmp_path.iterdir()}
 
     fake_docker()
-    with build_image_pair(DOCKERFILE_BEFORE, DOCKERFILE_AFTER, context_path=tmp_path):
+    with build_image_pair(
+        DOCKERFILE_BEFORE, DOCKERFILE_AFTER, context_before=tmp_path, context_after=tmp_path
+    ):
         pass
 
     assert {entry.name for entry in tmp_path.iterdir()} == before

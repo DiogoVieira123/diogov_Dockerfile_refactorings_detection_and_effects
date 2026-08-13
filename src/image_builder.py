@@ -185,11 +185,31 @@ def _remove_images(client: docker.DockerClient, images: List[Image]) -> None:
             client.images.remove(image.id, force=True)
 
 
+def _resolved_context(
+    context: Optional[Union[str, Path]], label: str
+) -> Optional[Path]:
+    """Validate one build context path, or pass None through.
+
+    Raises:
+        ImageBuildError: the path exists in the call but is not a directory.
+    """
+    if context is None:
+        return None
+    resolved = Path(context)
+    if not resolved.is_dir():
+        raise ImageBuildError(
+            f"Build context path for the '{label}' state is not a directory: "
+            f"{resolved}"
+        )
+    return resolved
+
+
 @contextlib.contextmanager
 def build_image_pair(
     dockerfile_before: str,
     dockerfile_after: str,
-    context_path: Optional[Union[str, Path]] = None,
+    context_before: Optional[Union[str, Path]] = None,
+    context_after: Optional[Union[str, Path]] = None,
 ) -> Iterator[BuiltImagePair]:
     """Build both Dockerfile states, yield their references, then remove them.
 
@@ -199,35 +219,39 @@ def build_image_pair(
     removed on exit whatever happens — a failed second build, an exception
     raised by either component, or an ordinary return.
 
+    Each state gets its own build context. The two commits may differ in the
+    files a COPY reads, not only in the Dockerfile text, and sharing one context
+    between them would let a file that changed alongside the refactoring leak
+    into both measurements — or, worse, build the earlier state against files
+    that only exist in the later one.
+
     Args:
         dockerfile_before: Dockerfile content at the earlier commit.
         dockerfile_after: Dockerfile content at the later commit.
-        context_path: directory whose files accompany both builds, required
-            when the Dockerfiles carry COPY or ADD instructions reading from
-            the build context. Defaults to None, a context holding only the
-            Dockerfile.
+        context_before: directory whose files accompany the earlier build,
+            required when that Dockerfile carries COPY or ADD instructions
+            reading from the build context. Defaults to None, a context holding
+            only the Dockerfile.
+        context_after: the same for the later build.
 
     Yields:
         The :class:`BuiltImagePair` referencing both built images.
 
     Raises:
-        ImageBuildError: the daemon is unreachable, the context path is not a
-            directory, or either build fails (RNF4).
+        ImageBuildError: the daemon is unreachable, either context path is not
+            a directory, or either build fails (RNF4).
     """
-    resolved_context = Path(context_path) if context_path is not None else None
-    if resolved_context is not None and not resolved_context.is_dir():
-        raise ImageBuildError(
-            f"Build context path is not a directory: {resolved_context}"
-        )
+    resolved_before = _resolved_context(context_before, "before")
+    resolved_after = _resolved_context(context_after, "after")
 
     client = _connect()
     built: List[Image] = []
     try:
         image_before = _build_image(
-            client, dockerfile_before, resolved_context, "before"
+            client, dockerfile_before, resolved_before, "before"
         )
         built.append(image_before)
-        image_after = _build_image(client, dockerfile_after, resolved_context, "after")
+        image_after = _build_image(client, dockerfile_after, resolved_after, "after")
         built.append(image_after)
 
         yield BuiltImagePair(

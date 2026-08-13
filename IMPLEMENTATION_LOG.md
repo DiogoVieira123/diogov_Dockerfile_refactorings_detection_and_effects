@@ -19,7 +19,8 @@ measured on 2026-08-11.
 | Performance Analyzer | `test_performance_analyzer.py` | 15 | RF4, RNF1, RNF4 |
 | Data Extractor | `test_data_extractor.py` | 43 | RF5, RF6, RNF2, RNF4, RNF5. 41 functions; one is parametrised over 3 cases |
 | Report Generator | `test_report_generator.py` | 35 | RF7, RNF5 |
-| **Total** | | **239 collected** | **235 passing, 4 skipped** |
+| Pipeline orchestrator + CLI | `test_pipeline.py` | 28 | Historical commit export, stage sequencing, Stage 2 concurrency, image and temp-tree lifetime, exit codes. 24 functions; one is parametrised over 5 cases |
+| **Total** | | **267 collected** | **263 passing, 4 skipped** |
 
 Per rule in the Detection Engine: R01 9, R02 16, R03 9, R04 6, R05 5, R06 6,
 R07 6, R08 10, R09 10, R10 7, R11 6, R12 7, R13 7, R14 7.
@@ -30,7 +31,161 @@ the image builder, Performance Analyzer and Data Extractor end-to-end tests need
 a reachable Docker daemon. All four run and pass under WSL2 with the daemon
 available; the skips are a property of the Windows host, not of the tests.
 
-Package coverage: 98% (780 statements, 15 uncovered).
+Package coverage: 98% (860 statements, 21 uncovered).
+
+---
+
+## 2026-08-13 — Historical commit contexts for the image builds
+
+**Purpose.** Build each Dockerfile state against its own commit's file tree
+instead of against the working tree, removing the soundness limitation recorded
+with the orchestrator.
+
+**The defect.** The orchestrator passed one context directory — the repository
+root as it stands now — to both builds. Two consequences, both silent:
+
+* a file that changed alongside the refactoring reached both measurements, so
+  the size delta carried that difference as well as the refactoring's;
+* the earlier state was built against files that may not have existed at its
+  commit, which is not a measurement of that state at all.
+
+**Implementation.** `pipeline.commit_context(repository, sha)` is a context
+manager that exports one commit's tree into a temporary directory:
+
+* `repo.archive(stream, treeish=sha, format="tar")` writes the tree as a tar
+  stream in memory. It touches neither the working tree nor the index, which
+  keeps the export consistent with the blob-level access the VCS Connector
+  already uses (RF1) — nothing is checked out and the repository is left
+  exactly as it was found.
+* The archive is unpacked with `extractall(destination, filter="data")`. The
+  filter rejects absolute paths, parent-directory traversal, links pointing
+  outside the destination and device nodes, so a crafted repository cannot
+  write beyond the temporary directory.
+* `tempfile.TemporaryDirectory` is created outside the `try` and cleaned up in
+  its `finally`, so the directory is removed whether the export fails, the
+  caller raises, or the block ends normally.
+
+`build_image_pair` now takes `context_before` and `context_after` rather than a
+single `context_path`, since the whole point is that the two builds no longer
+share a context. `run_analysis` opens both exports and the build in one
+`contextlib.ExitStack`, which holds the directories for as long as the builds
+need them and unwinds in reverse on the way out: images first, then the trees
+that produced them.
+
+**Failure handling.** A new `CommitContextError` covers a repository that
+cannot be opened, a treeish Git does not recognise, and an archive that cannot
+be unpacked, so a raw GitPython or tarfile error never escapes (RNF4). It maps
+to exit code 3 at the command line, alongside the other preparation failures.
+
+**Removed.** The `--context` command-line flag and the `build_context`
+parameter. With per-commit contexts, the only thing that option could do was
+reintroduce the defect this change fixes, and an option whose sole effect is to
+make the measurement unsound is worse than no option.
+
+**Testing.** 12 tests added to `tests/test_pipeline.py`. Seven exercise
+`commit_context` against a real two-commit repository built by a fixture, whose
+commits differ in file *content* and in which files exist: the export carries
+the tree as it was at that commit and omits a file added later, an abbreviated
+SHA is accepted, the directory is removed on exit and when the caller raises,
+the working tree is left untouched, an unknown commit and a path that is not a
+repository each raise `CommitContextError`. Five cover the wiring: both trees
+exported in order, the two builds receiving different contexts, the exports
+preceding the build, both trees removed after the images, and both removed even
+when a Stage 2 component fails.
+
+**End-to-end proof.** A repository was built with two commits whose committed
+`payload.txt` is 6 bytes, after which the working tree copy was replaced with a
+405,264-byte file that was never committed. Analysed through the command line,
+the images measured 3,632,156 and 3,632,741 bytes — the size of the committed
+payload. Had the working tree been used, both would have carried the extra
+400 KB and the measurement would have been meaningless. No temporary directory
+survived the run.
+
+**Suite.** 263 tests passing, 4 skipped. Package coverage 98%.
+
+---
+
+## 2026-08-13 — Pipeline orchestrator and command-line entry point (Section 5.1)
+
+**Purpose.** Chain the five components into a runnable analysis. Until now each
+component was a library with a public function and none imported another, so
+the pipeline existed as a design and as throwaway validation scripts, but not
+as code in the repository. This closes that gap.
+
+**Files.** `src/pipeline.py` holds the orchestration as an importable function;
+`main.py` at the repository root is the command-line entry point. The split
+keeps the sequencing testable without invoking a process.
+
+**Key design decisions.**
+
+*The orchestrator owns the sequence, the components stay ignorant of it.* Every
+component still knows nothing of its neighbours. The ordering, the parallelism
+and the resource lifetime live in one place, which is what keeps the components
+independently testable and independently replaceable.
+
+*Stage 2 concurrency is the orchestrator's to arrange.* The two components are
+submitted to a two-worker pool against the same image references. Both futures
+are resolved before either result is used, so a failure in one does not leave
+the other running past the exit of the preparation context. The images are
+built once, before the stage begins, and removed when its context closes —
+whatever happened inside it.
+
+*Provenance is gathered after the measurements, not before.* The Trivy
+vulnerability database is downloaded into the shared cache during the first
+scan, so a version query made beforehand would report it as absent. Collecting
+the versions inside the preparation context, after Stage 2, makes the recorded
+database version the one the scans actually used (RNF5).
+
+*Exit codes make RNF4's distinct exceptions observable.* Each component's
+exception maps to its own code — 1 VCS Connector, 2 Detection Engine parsing,
+3 image preparation, 4 Performance Analyzer, 5 Data Extractor, 6 report
+writing. Without this the distinct exception types collapse into a single
+non-zero exit at the process boundary and the diagnostic value is lost.
+
+**Problem and solution — the build context.** The VCS Connector retrieves
+Dockerfile content at blob level without a checkout (RF1), and no component
+reconstructs a full tree, yet a Dockerfile carrying COPY needs its context
+files to build. The orchestrator therefore takes the build context from the
+working tree as it stands, defaulting to the repository root and overridable
+with `--context`. This is a real limitation and is documented in the function's
+docstring: for the analysis to be sound the files a COPY reads must be
+equivalent across the two commits, and where they are not, the size delta
+carries that difference alongside the refactoring's. Reconstructing the tree at
+each commit would extend the VCS Connector beyond RF1 and was not done.
+
+**Testing.** 19 tests in `tests/test_pipeline.py`, with all five components
+replaced by fakes so the wiring is exercised without a daemon and without
+repeating what each component's own suite covers: stage ordering, both Stage 2
+components receiving the same image references, the images alive during Stage 2
+and removed after, the tracked Dockerfile path reaching the VCS Connector, the
+build context defaulting to the repository and honouring an override, the three
+artifacts written, the report carrying the detection and both SHAs, a Stage 2
+failure still removing the images, no image built when retrieval fails, the CLI
+returning zero and printing the summary, and each of the five failures mapping
+to its own exit code.
+
+**End-to-end verification.** A throwaway Git repository was created under WSL
+with two commits — the R09 catalogue pair, `Dockerfile.before` then
+`Dockerfile.after` with `setup.sh` — and analysed exactly as a reader would:
+
+```
+python3 main.py /tmp/demo 1ae60d5 db807e7 -o /tmp/out
+```
+
+It reported `R09 Extract RUN Instructions` with ΔSize +410, ΔCVEs +0,
+ΔWarnings +0, ΔInstr +1, exited 0, and wrote four files: `impact_report.json`
+(2,608 B), `human_readable_summary.txt` (2,393 B), and under `raw_data/` the
+retained evidence (50,647 B of Trivy output, 34 B of Hadolint). The environment
+block recorded Docker Engine 29.1.3, Hadolint 2.14.0, Trivy 0.72.0, Trivy
+database 2026-08-13T19:12:03Z, dockerfile-parse 2.0.1, GitPython 3.1.50, Docker
+SDK 7.1.0 and Python 3.14.4.
+
+A first attempt failed on a transient Trivy database download error, which
+surfaced as `DataExtractorError` naming the failing scan and exited 5 — the
+RNF4 contract and the exit-code mapping both behaving as specified against a
+real fault rather than a simulated one.
+
+**Suite.** 254 tests passing, 4 skipped. Package coverage 98%.
 
 ---
 

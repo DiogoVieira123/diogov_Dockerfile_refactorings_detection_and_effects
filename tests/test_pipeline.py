@@ -1,7 +1,7 @@
 """Tests for the pipeline orchestrator and the command-line entry point.
 
 The five components are replaced by fakes, so these tests exercise the wiring —
-the order of the stages, the concurrency of Stage 2, the lifetime of the built
+the order of the stages, the concurrency of Stage 3, the lifetime of the built
 images and the mapping of each failure to its exit code — without a daemon and
 without repeating what each component's own suite already covers.
 """
@@ -46,7 +46,7 @@ class Recorder:
 
     def __init__(self):
         self.calls = []
-        self.images_alive_during_stage_2 = None
+        self.images_alive_during_measurement = None
 
 
 @pytest.fixture
@@ -86,7 +86,7 @@ def wired(monkeypatch):
 
     def measure(image_before, image_after):
         log.calls.append(("measure", image_before, image_after))
-        log.images_alive_during_stage_2 = state["images_open"]
+        log.images_alive_during_measurement = state["images_open"]
         return SizeMetric.from_sizes(100, 120)
 
     def extract(a, b, image_before, image_after):
@@ -207,7 +207,7 @@ def test_the_pipeline_runs_the_stages_in_order(wired, tmp_path):
     assert order[-1] == "tree_removed"
 
 
-def test_both_stage_2_components_receive_the_same_images(wired, tmp_path):
+def test_both_measurement_components_receive_the_same_images(wired, tmp_path):
     pipeline.run_analysis("/repo", "aaa", "bbb", tmp_path)
     measure = next(c for c in wired.calls if c[0] == "measure")
     extract = next(c for c in wired.calls if c[0] == "extract")
@@ -215,9 +215,9 @@ def test_both_stage_2_components_receive_the_same_images(wired, tmp_path):
     assert extract[1:] == ("img-a", "img-b")
 
 
-def test_the_images_are_still_alive_while_stage_2_runs(wired, tmp_path):
+def test_the_images_are_still_alive_while_the_measurement_runs(wired, tmp_path):
     pipeline.run_analysis("/repo", "aaa", "bbb", tmp_path)
-    assert wired.images_alive_during_stage_2 is True
+    assert wired.images_alive_during_measurement is True
 
 
 def test_the_images_are_removed_after_the_analysis(wired, tmp_path):
@@ -293,7 +293,7 @@ def test_the_report_carries_the_detection_and_the_commits(wired, tmp_path):
 # --- Failure propagation ------------------------------------------------------------
 
 
-def test_a_stage_2_failure_still_removes_the_images(wired, tmp_path, monkeypatch):
+def test_a_measurement_failure_still_removes_the_images(wired, tmp_path, monkeypatch):
     def failing(image_before, image_after):
         raise PerformanceAnalyzerError("no size")
 

@@ -1,6 +1,6 @@
 """Unit tests for the Performance Analyzer (RF4, RNF1, RNF4).
 
-The component measures images the preparation phase already built, so the
+The component measures images the preparation already built, so the
 measurement logic and the exception contract run against a fake Docker client
 and need no daemon. The end-to-end test builds two real images through
 ``image_builder`` and is skipped when Docker is not reachable.
@@ -123,13 +123,13 @@ def test_measurement_inspects_exactly_the_two_images_it_was_given(fake_docker):
 
 
 def test_the_component_never_builds_anything(fake_docker):
-    # Building belongs to the preparation phase; the fake asserts on any call.
+    # Building belongs to the preparation; the fake asserts on any call.
     fake_docker()
     measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
 
 
 def test_the_component_leaves_both_images_in_place(fake_docker):
-    # Removal is the preparation phase's responsibility: the Data Extractor
+    # Removal is the preparation's responsibility: the Data Extractor
     # runs in parallel and needs the same images.
     client = fake_docker()
     measure_size_delta(IMAGE_BEFORE, IMAGE_AFTER)
@@ -189,7 +189,7 @@ def _daemon_available() -> bool:
 
 @pytest.mark.skipif(not _daemon_available(), reason="Docker daemon not reachable")
 def test_end_to_end_against_a_real_daemon():
-    """RF4 end to end: the preparation phase builds, the analyzer measures."""
+    """RF4 end to end: the preparation builds, the analyzer measures."""
     before = "FROM alpine:3.20\nRUN echo before > /marker\n"
     after = "FROM alpine:3.20\nRUN echo after-with-more-content > /marker\n"
 

@@ -5,30 +5,39 @@ knows nothing of its neighbours; the ordering, the parallelism and the resource
 lifetime all live here, which is what keeps the components independently
 testable and independently replaceable.
 
-The three stages of the design run as follows:
+The four stages of the design run as follows:
 
-    Stage 1   VCS Connector -> Detection Engine
-              Two Dockerfile states are retrieved from the Git object model and
-              the structural change between them is classified.
+    Stage 1   Data collection — vcs_connector
+              Reaches into the Git object model to extract the Dockerfile
+              content at each of the two commits, at blob level.
 
-    (prep)    image_builder
-              Both images are built once, before Stage 2 begins. The build
-              belongs here rather than inside a Stage 2 component because both
-              of them consume the images: leaving it in either would make the
-              other wait on it, and giving each its own build would duplicate
-              the most expensive operation in the pipeline.
+    Stage 2   Refactoring detection — detection_engine
+              Decomposes both states with dockerfile-parse and applies the
+              rules that identify the refactoring type.
 
-    Stage 2   Performance Analyzer || Data Extractor
-              Dispatched concurrently against the same image references. Neither
-              reads a value produced by the other, so the two run without
-              coordination and the elapsed time is that of the slower one.
+    Stage 3   Empirical evaluation and measurement — commit_context,
+              image_builder, performance_analyzer, data_extractor
+              Runs in two steps. The preparation exports each commit's file
+              tree through Git archive and builds the image pair, each state
+              isolated in its own context. The measurement then runs in
+              parallel through a ThreadPoolExecutor: image size (delta Size),
+              vulnerabilities (delta CVEs), static warnings (delta Warnings)
+              and logical instructions (delta Instr).
 
-    Stage 3   Report Generator
-              Aggregates the detection identifiers with the four measured
-              deltas and writes the three artifacts.
+              The build belongs to the preparation rather than inside either
+              measurement component because both of them consume the images:
+              leaving it in either would make the other wait on it, and giving
+              each its own build would duplicate the most expensive operation
+              in the pipeline. Neither measurement component reads a value
+              produced by the other, so the two run without coordination and
+              the elapsed time is that of the slower one.
 
-Both images are removed when the preparation context closes, whatever happened
-inside it, so a failed run leaves no images behind.
+    Stage 4   Report generation — report_generator
+              Aggregates the metrics established in Stage 3, compiles the
+              technical provenance block and writes the final output artifacts.
+
+Both images and both exported trees are removed when Stage 3's contexts close,
+whatever happened inside them, so a failed run leaves nothing behind.
 """
 
 from __future__ import annotations
@@ -201,14 +210,14 @@ def run_analysis(
     """
     repository = Path(repository_path)
 
-    # --- Stage 1: retrieval and detection ---------------------------------
+    # --- Stages 1 and 2: data collection, then refactoring detection ------
     pair = retrieve_dockerfile_pair(
         str(repository), commit_before, commit_after, dockerfile_path
     )
     before, after = pair.dockerfile_a, pair.dockerfile_b
     detections = detect_refactorings(before, after)
 
-    # --- Preparation: each state's own commit tree, then one build each ----
+    # --- Stage 3, preparation: each state's own commit tree, one build each
     # ExitStack holds both temporary directories open for as long as the builds
     # need them and unwinds them in reverse order on the way out, whether the
     # block ends normally or by exception.
@@ -224,7 +233,7 @@ def run_analysis(
             )
         )
 
-        # --- Stage 2: independent components, genuinely concurrent --------
+        # --- Stage 3, measurement: independent components, concurrent -----
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             size_future = pool.submit(
                 measure_size_delta, images.image_before, images.image_after
@@ -234,7 +243,7 @@ def run_analysis(
             )
             # Both futures are resolved before either result is used, so a
             # failure in one does not leave the other running past the exit of
-            # the preparation context.
+            # the preparation's context.
             size_error = data_error = None
             try:
                 size_metric = size_future.result()
@@ -251,7 +260,7 @@ def run_analysis(
 
         tool_versions = _collect_tool_versions()
 
-    # --- Stage 3: aggregation ---------------------------------------------
+    # --- Stage 4: aggregation ---------------------------------------------
     return generate_report(
         detections,
         size_metric,

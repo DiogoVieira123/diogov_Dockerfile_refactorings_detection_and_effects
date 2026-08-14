@@ -1,8 +1,8 @@
 """Data Extractor — security and maintainability metrics (Chapter 5, Section 5.6).
 
-Stage 2 component, running in parallel with the Performance Analyzer. It
-receives the two Dockerfile states and the references to the two images the
-preparation phase built, and returns three signed deltas (RF5, RF6):
+Stage 3 measurement component, running in parallel with the Performance
+Analyzer. It receives the two Dockerfile states and the references to the two
+images Stage 3's preparation built, and returns three signed deltas (RF5, RF6):
 
 * ΔCVEs — distinct vulnerability identifiers reported by Trivy against each
   built image, overall and by severity tier;
@@ -11,11 +11,11 @@ preparation phase built, and returns three signed deltas (RF5, RF6):
 * ΔInstr — logical instructions of each Dockerfile text, COMMENT excluded.
 
 The component measures and nothing else. It does not build images and it does
-not remove them: both belong to the preparation phase (``image_builder``), and
+not remove them: both belong to the preparation stage (``image_builder``), and
 the images arrive here as identifiers consumed strictly read-only. It never
 reads a value produced by the Performance Analyzer either — its three metrics
 are computed without ΔSize, just as ΔSize is computed without them. That mutual
-independence is what allows the two Stage 2 components to run concurrently;
+independence is what allows the two measurement components to run concurrently;
 this module holds no state and shares no object with its sibling.
 
 Internally the two external tools are invoked concurrently, since a Trivy image
@@ -391,7 +391,7 @@ def extract_metrics(
     """Extract the three indicators for both states and the deltas (RF5, RF6).
 
     The component's entry point. Both images must already exist; building and
-    removing them is the preparation phase's responsibility, and this function
+    removing them is the preparation's responsibility, and this function
     only reads them.
 
     The four external invocations — two Trivy scans and two Hadolint analyses —

@@ -1,15 +1,15 @@
 """Performance Analyzer — image size measurement (Chapter 5, Section 5.5).
 
-Stage 2 component, running in parallel with the Data Extractor. It receives
-the references to the two images the preparation phase built (see
+Stage 3 measurement component, running in parallel with the Data Extractor. It
+receives the references to the two images Stage 3's preparation built (see
 ``image_builder``) and returns the signed size delta between them (RF4).
 
 The component measures and nothing else. It does not build, and it never
 reads a value produced by the Data Extractor: ΔSize is computed from the two
 images alone, just as ΔCVEs, ΔWarnings and ΔInstr are computed without ΔSize.
-That mutual independence is what allows the two Stage 2 components to run
+That mutual independence is what allows the two measurement components to run
 concurrently, and this module holds no state and shares no object with either
-the preparation phase or its sibling — only the image references, which both
+the preparation or its sibling — only the image references, which both
 consume read-only.
 
 Size is read from ``image.attrs["Size"]`` through the Docker SDK, never from
@@ -100,7 +100,7 @@ def _image_size(client: docker.DockerClient, image_reference: str, label: str) -
 
     Args:
         client: an open Docker client.
-        image_reference: ID or tag of an image the preparation phase built.
+        image_reference: ID or tag of an image the preparation built.
         label: which state is being measured ("before"/"after"), used only to
             make the diagnostic message identify the failing side.
 
@@ -139,7 +139,7 @@ def measure_size_delta(image_before: str, image_after: str) -> SizeMetric:
     """Measure the size of both built images and the delta between them (RF4).
 
     The component's entry point. Both images must already exist; building them
-    is the preparation phase's responsibility (``image_builder``), and their
+    is the preparation's responsibility (``image_builder``), and their
     removal is too, so this function leaves the daemon exactly as it found it.
 
     Args:

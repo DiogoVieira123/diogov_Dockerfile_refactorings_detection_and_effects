@@ -1,12 +1,12 @@
-"""Image preparation phase — builds the resources Stage 2 consumes.
+"""Stage 3, preparation — builds the images the measurement consumes.
 
-Stage 2 of the pipeline runs the Performance Analyzer and the Data Extractor
+Stage 3 measures with the Performance Analyzer and the Data Extractor running
 in parallel, and neither may depend on the other. Both nonetheless need the
 same resource: the Performance Analyzer reads the size of each built image,
 and the Data Extractor scans those images with Trivy. Leaving the build inside
 either component would make the other wait on it, so the build is lifted out
-into this preparation phase, owned by the pipeline orchestrator and completed
-before Stage 2 begins.
+into this preparation step, owned by the pipeline orchestrator and completed
+before the measurement begins.
 
 The two components then consume the resulting image references independently
 and concurrently, which is what makes their parallel execution genuine rather
@@ -48,7 +48,7 @@ class ImageBuildError(Exception):
 
     RNF4: every Docker SDK failure during preparation — an unreachable daemon,
     a build that does not complete — is re-raised as this exception with the
-    underlying cause attached, so the pipeline can abort cleanly before Stage 2
+    underlying cause attached, so the pipeline can abort cleanly before the measurement
     starts and report which state failed.
     """
 
@@ -56,9 +56,9 @@ class ImageBuildError(Exception):
 class BuiltImagePair(NamedTuple):
     """References to the images built for the two Dockerfile states.
 
-    Identifiers rather than SDK objects, so the Stage 2 components consume the
+    Identifiers rather than SDK objects, so the measurement components consume the
     resource without sharing a client, a connection or any object graph with
-    the preparation phase or with each other.
+    the preparation or with each other.
     """
 
     image_before: str  # image ID of the earlier commit's state
@@ -172,7 +172,7 @@ def _build_image(
 
 
 def _remove_images(client: docker.DockerClient, images: List[Image]) -> None:
-    """Remove every image the preparation phase built.
+    """Remove every image the preparation built.
 
     Runs during cleanup, where an exception would mask the failure that
     triggered it, so removal errors are swallowed deliberately: an image that
@@ -213,7 +213,7 @@ def build_image_pair(
 ) -> Iterator[BuiltImagePair]:
     """Build both Dockerfile states, yield their references, then remove them.
 
-    The orchestrator wraps Stage 2 in this context: the builds complete before
+    The orchestrator wraps the measurement in this context: the builds complete before
     the block is entered, the Performance Analyzer and the Data Extractor run
     concurrently inside it against the yielded references, and both images are
     removed on exit whatever happens — a failed second build, an exception
@@ -267,7 +267,7 @@ def docker_engine_version() -> str:
     """Version string of the Docker Engine the images were built against.
 
     Exposed for the Report Generator, which records the version of every
-    external tool invoked (RNF5). The preparation phase is where the Docker
+    external tool invoked (RNF5). The preparation is where the Docker
     environment is established, so it is where that version is read.
 
     Raises:

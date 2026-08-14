@@ -1,7 +1,7 @@
-"""Report Generator — terminal stage of the pipeline (Chapter 5, Section 5.7).
+"""Report Generator — Stage 4, the terminal stage (Chapter 5, Section 5.7).
 
 Consumes the DetectionResult list produced by the Detection Engine and the
-metrics produced by the two Stage 2 components, and writes the ImpactReport as
+metrics produced by the two Stage 3 components, and writes the ImpactReport as
 three artifacts on disk (RF7, RNF5):
 
 * ``impact_report.json`` — the structured output, carrying the before and after

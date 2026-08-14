@@ -1,4 +1,4 @@
-"""Unit tests for the image preparation phase (RNF4).
+"""Unit tests for the Stage 3 preparation step (RNF4).
 
 The build invocation, the cleanup guarantees and the exception contract are
 exercised against a fake Docker client, so the suite runs without a daemon.
@@ -85,7 +85,7 @@ def test_build_image_pair_yields_both_image_references(fake_docker):
 
 
 def test_the_pair_carries_identifiers_and_not_sdk_objects(fake_docker):
-    # Stage 2 consumes references, sharing no object graph with this phase.
+    # The measurement consumes references, sharing no object graph with this step.
     fake_docker()
     with build_image_pair(DOCKERFILE_BEFORE, DOCKERFILE_AFTER) as pair:
         assert isinstance(pair.image_before, str)
@@ -115,7 +115,7 @@ def test_docker_engine_version_is_reported_for_rnf5(fake_docker):
 def test_both_images_are_removed_when_the_context_closes(fake_docker):
     client = fake_docker()
     with build_image_pair(DOCKERFILE_BEFORE, DOCKERFILE_AFTER):
-        assert client.images.removed == []  # still available to Stage 2
+        assert client.images.removed == []  # still available to the measurement
     assert client.images.removed == ["sha256:image1", "sha256:image2"]
     assert client.closed
 
@@ -129,11 +129,11 @@ def test_the_first_image_is_removed_when_the_second_build_fails(fake_docker):
     assert client.images.removed == ["sha256:image1"]
 
 
-def test_images_are_removed_when_a_stage_2_component_raises(fake_docker):
+def test_images_are_removed_when_a_measurement_component_raises(fake_docker):
     client = fake_docker()
     with pytest.raises(ValueError):
         with build_image_pair(DOCKERFILE_BEFORE, DOCKERFILE_AFTER):
-            raise ValueError("a Stage 2 component failed")
+            raise ValueError("a measurement component failed")
     assert client.images.removed == ["sha256:image1", "sha256:image2"]
 
 
@@ -267,10 +267,10 @@ def test_end_to_end_against_a_real_daemon():
     images_before_run = {image.id for image in client.images.list()}
 
     with build_image_pair(before, after) as pair:
-        # Stage 2 finds both images present and inspectable.
+        # The measurement finds both images present and inspectable.
         assert client.images.get(pair.image_before).attrs["Size"] > 0
         assert client.images.get(pair.image_after).attrs["Size"] > 0
 
-    # Nothing the preparation phase built survives it.
+    # Nothing the preparation built survives it.
     assert {image.id for image in client.images.list()} == images_before_run
     client.close()

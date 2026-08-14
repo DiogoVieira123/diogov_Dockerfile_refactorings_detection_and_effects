@@ -35,6 +35,59 @@ Package coverage: 98% (860 statements, 21 uncovered).
 
 ---
 
+## 2026-08-14 — Pipeline restated as four stages
+
+**Purpose.** Adopt the author's unified architectural narrative so Chapter 4
+and Chapter 5 describe the same sequence. Documentation only: no logic, no
+signature and no assertion changed behaviour, and the suite is unchanged at 263
+passing, 4 skipped.
+
+**The division.**
+
+| Stage | Name | Module(s) |
+|---|---|---|
+| 1 | Data collection | `vcs_connector` |
+| 2 | Refactoring detection | `detection_engine` |
+| 3 | Empirical evaluation and measurement | `commit_context`, `image_builder` (preparation); `performance_analyzer`, `data_extractor` (measurement) |
+| 4 | Report generation | `report_generator` |
+
+**Stage 3 has two steps, and the code names them.** Merging preparation and
+measurement into one stage left two groups of modules sharing a number, so the
+vocabulary distinguishes them: the build is "the preparation" and the two
+concurrent components are "the measurement components". Without that, a comment
+reading "Stage 3 built the images" would be ambiguous about which half did it.
+The inline markers in `run_analysis` read `Stage 3, preparation` and
+`Stage 3, measurement`.
+
+**What changed.** 38 references across eight files: the orchestrator's module
+docstring, the stage markers in `run_analysis`, the module docstrings of the
+four Stage 3 modules and the Report Generator, the exit-code table in
+`main.py`, and four test names plus one recorder attribute that still carried
+numbers from an earlier scheme. Test names now describe the role rather than
+the number — `test_a_measurement_failure_still_removes_the_images` rather than
+`test_a_stage_2_failure_...` — so a further renumbering does not invalidate
+them.
+
+**Exit codes.** Stage 3 owns three of them, since its three failure modes are
+diagnostically distinct: 3 for the preparation (tree export or build), 4 for
+the size measurement, 5 for the extraction. Collapsing them to one code per
+stage would lose the RNF4 distinction the exceptions exist to provide.
+
+**Divergence to reconcile.** `DESIGN_CHAPTER.md` still numbers three stages in
+its pipeline figure and Table 4.10 (rows 1, 2, 3a, 3b, 4). The chapter was not
+edited, being the author's manuscript. The mapping is: chapter Stage 1 splits
+into Stages 1 and 2; chapter Stage 2 plus the unnumbered preparation becomes
+Stage 3; chapter Stage 3 becomes Stage 4.
+
+**Note on the brief.** The instruction described "5 módulos/estágios estritos"
+and then listed four numbered stages. The numbered list was followed. Five is
+the count of *components* — VCS Connector, Detection Engine, Performance
+Analyzer, Data Extractor, Report Generator — which is what Chapter 4 counts;
+four is the count of *stages*, which is what this division counts. The two
+numbers describe different things and both are correct.
+
+**Suite.** 263 tests passing, 4 skipped, unchanged.
+
 ## 2026-08-13 — Historical commit contexts for the image builds
 
 **Purpose.** Build each Dockerfile state against its own commit's file tree

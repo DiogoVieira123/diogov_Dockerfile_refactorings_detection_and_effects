@@ -14,13 +14,13 @@ requires stay distinguishable at the process boundary rather than collapsing
 into a single failure:
 
     0  analysis completed
-    1  repository, commit or Dockerfile not found        (VCS Connector)
-    2  a Dockerfile state could not be parsed            (Detection Engine)
+    1  repository, commit or Dockerfile not found        (Stage 1)
+    2  a Dockerfile state could not be parsed            (Stage 2)
     3  a commit's file tree could not be exported, the daemon is unreachable,
-       or a build failed                                 (image preparation)
-    4  an image size could not be measured               (Performance Analyzer)
-    5  Hadolint or Trivy failed                          (Data Extractor)
-    6  the report could not be written
+       or a build failed                                 (Stage 3, preparation)
+    4  an image size could not be measured               (Stage 3, size)
+    5  Hadolint or Trivy failed                          (Stage 3, extraction)
+    6  the report could not be written                   (Stage 4)
 
 Each state is built against its own commit's file tree, exported to a
 temporary directory and removed when the analysis ends, so the measurement

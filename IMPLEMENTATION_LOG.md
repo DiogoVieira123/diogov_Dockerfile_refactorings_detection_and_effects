@@ -73,18 +73,16 @@ diagnostically distinct: 3 for the preparation (tree export or build), 4 for
 the size measurement, 5 for the extraction. Collapsing them to one code per
 stage would lose the RNF4 distinction the exceptions exist to provide.
 
-**Divergence to reconcile.** `DESIGN_CHAPTER.md` still numbers three stages in
-its pipeline figure and Table 4.10 (rows 1, 2, 3a, 3b, 4). The chapter was not
-edited, being the author's manuscript. The mapping is: chapter Stage 1 splits
-into Stages 1 and 2; chapter Stage 2 plus the unnumbered preparation becomes
-Stage 3; chapter Stage 3 becomes Stage 4.
+**Five components, four stages.** The two counts describe different things and
+both are correct. Five is the count of *components* — VCS Connector, Detection
+Engine, Performance Analyzer, Data Extractor, Report Generator — which is what
+Chapter 4 enumerates. Four is the count of *stages*, because Stage 3 holds
+three of those components plus the commit export.
 
-**Note on the brief.** The instruction described "5 módulos/estágios estritos"
-and then listed four numbered stages. The numbered list was followed. Five is
-the count of *components* — VCS Connector, Detection Engine, Performance
-Analyzer, Data Extractor, Report Generator — which is what Chapter 4 counts;
-four is the count of *stages*, which is what this division counts. The two
-numbers describe different things and both are correct.
+**Aligned with the design chapter.** `DESIGN_CHAPTER.md` names the same four
+stages in the same order and with the same titles: Stage 1 Data Collection,
+Stage 2 Refactoring Detection, Stage 3 Empirical Evaluation and Measurement,
+Stage 4 Report Generation. Code and chapter use one vocabulary.
 
 **Suite.** 263 tests passing, 4 skipped, unchanged.
 
@@ -239,6 +237,119 @@ RNF4 contract and the exit-code mapping both behaving as specified against a
 real fault rather than a simulated one.
 
 **Suite.** 254 tests passing, 4 skipped. Package coverage 98%.
+
+---
+
+## Detection Engine — mechanical detection logic of R09, R11 and R14
+
+Formal statement of the criteria three rules apply, as implemented in
+`src/detection_engine.py`. Each is written as the conjunction the code
+evaluates, so the entry can be read against the source without paraphrase.
+
+### R09 — Extract RUN Instructions
+
+The refactoring moves a chained shell sequence out of a RUN into an external
+script, which the Dockerfile then copies in and executes. The script is a file
+the pipeline never sees, since the VCS Connector delivers one Dockerfile at two
+commits (RF1). The rule is nonetheless decidable from the Dockerfile alone,
+because the move leaves three facts in it. All three must hold:
+
+1. **Shell work left the file.** The total number of shell command segments
+   across all RUN instructions falls. Segments are recovered by splitting each
+   RUN body on `&&`, `||` and `;` with whitespace normalised, so a multi-line
+   RUN joined by continuations is counted by its commands, not its lines. This
+   condition carries the directional weight: without it, adding a script is new
+   functionality rather than an extraction.
+2. **A script arrived.** A COPY or ADD present in the after state brings in a
+   file whose name ends in `.sh` or `.bash`, and no transfer in the before
+   state delivered a script of that file name. Comparing file names rather than
+   whole argument strings is what stops a script that merely changed
+   destination from reading as a new arrival — the guard that keeps R09 off the
+   R12 scenario, where `COPY entrypoint.sh /tmp/…` becomes
+   `COPY entrypoint.sh /app/bin/…`.
+3. **A RUN executes it.** Some RUN in the after state invokes the script at the
+   path the transfer gives it. A destination ending in `/`, or any transfer with
+   several sources, resolves to the destination directory joined with the source
+   file name, so `COPY setup.sh /app/` and `COPY setup.sh /app/setup.sh` are
+   both handled.
+
+**Invocation is positional, not textual.** The script counts as executed only
+when it stands where a command stands: as a segment's own first token, in its
+`/app/setup.sh` or `./setup.sh` forms, or as the file handed to an interpreter
+in `{sh, bash, ash, dash, ., source}`. A path passed to another command, as in
+`chmod +x /app/setup.sh`, prepares the script without running it and does not
+satisfy the condition.
+
+Reported are the RUN instructions of the before state that do not survive into
+the after state, paired with the new transfer and the invoking RUN. The reverse
+path is silent by construction: inlining a script back makes the transfer
+disappear rather than appear, so condition 2 fails.
+
+### R11 — Move Stage
+
+The refactoring lifts a build stage into a standalone Dockerfile of its own,
+built separately, with the main file keeping only a reference to the image that
+build produces. As with R09 the second file is never seen, and again the
+operation leaves a signature. Four conditions, evaluated per stage of the
+before state:
+
+1. **The stage had a body.** Its instruction list, excluding the opening FROM,
+   is non-empty — there is work that could have moved out.
+2. **The body is gone.** The stage with the same identity in the after state
+   holds no instructions. Identity is the stage's alias lower-cased, or its
+   positional index when unnamed, which is exactly how a `COPY --from=` names
+   it; one code path therefore serves named and unnamed stages alike.
+3. **The base reference changed.** The emptied stage's FROM now names a
+   different image. An emptied stage still on its original base is a deletion,
+   not a move, and this is the condition that separates them.
+4. **Something still consumes it.** Some COPY or ADD in the after state carries
+   `--from=` naming that identity, so the build continues to depend on what the
+   stage delivers.
+
+**The stage count is unchanged**, which is what distinguishes R11 from Extract
+Stage (R05) and Inline Stage (R06) and stops the three stage rules competing
+for one pair. Reported are the instructions that left the file, paired with the
+emptied FROM that now names the externally built image.
+
+Under the non-exclusion principle this pair also satisfies R10, since the FROM
+reference changed while the alias was preserved. Both are reported; the
+composite reading was accepted by the author on 2026-08-08, on the grounds that
+suppressing R10 would couple two rules that RNF3 requires to stay independent.
+
+### R14 — Rename Image
+
+The refactoring names a build stage, or renames one, without touching the image
+it builds from. FROM instructions are aligned by stage position, and a FROM
+qualifies on the conjunction of two conditions:
+
+1. **The image reference is untouched.** Repository name, tag, digest and
+   platform flags are all identical. Any change there belongs to R02 (tag
+   update) or R10 (entity substitution), so this condition is what keeps the
+   three FROM rules disjoint.
+2. **The alias mutates in an accepted direction**, per the validation logic
+   fixed by the author on 2026-07-06:
+   * *alias appears* — none before, one after: accepted. It removes the
+     technical debt of numeric stage references such as `--from=0`.
+   * *alias changes* — two different non-empty aliases: accepted. This is the
+     direct syntactic equivalent of DRMiner's Rename Image behaviour.
+   * *alias disappears* — one before, none after: rejected. It is the reverse
+     path and reintroduces the numeric-reference debt.
+
+**Scope is the FROM instruction alone.** A rename normally forces matching
+edits to the `--from=` references that read from the stage, and those edits are
+tolerated as noise rather than examined: the granular evaluation law has each
+rule judge only the instruction subset it concerns. When the two states hold
+different numbers of FROMs the positional alignment is ambiguous — Extract and
+Inline Stage territory — and the rule stays silent rather than guessing.
+
+### Shared properties
+
+None of the three reads the extended catalogue at any point. Each decides from
+the parsed instruction lists of the two states alone, and the catalogue
+identifier it emits is a label naming what was found, never a value consulted
+to reach the decision (RF3). All three return `None` when their conjunction
+fails, which `detect_refactorings` renders as absence from the result list, and
+an empty list is the engine's answer when no rule matches.
 
 ---
 
@@ -468,24 +579,19 @@ measurement to the point of serialisation.
 | Report Generator | RF7 structured output, RNF5 provenance | conformant |
 | All components | RF1 single-file scope | no Dockerfile discovery anywhere |
 
-**Discrepancies left standing, both documentation-side.**
+**Naming, reconciled with the design chapter.**
 
-*`delta_hadolint`.* RF7 lists the delta keys as `delta_size, delta_warnings,
-delta_hadolint, delta_logical_instructions`. There is no `delta_hadolint`
-quantity in the design — the four metrics are size, CVEs, warnings and logical
-instructions — and the list has no key for CVEs at all. The author identified
-this as an error in the chapter text on 2026-08-07 and approved `delta_cves` in
-the code, which is what the code emits. Implementing the literal chapter name
-would encode a known error and leave the CVE delta unnamed, so it was not done.
-The chapter line remains to be retouched.
+*Delta keys.* RF7 names the four keys `delta_size`, `delta_warnings`,
+`delta_cves` and `delta_logical_instructions`. The code emits exactly those,
+verified by `test_the_delta_key_names_match_the_design_chapter`, which asserts
+the set of `delta_*` keys in the serialised report against that list.
 
-*`SizeMetric`.* Table 4.10 describes the Performance Analyzer as outputting
-`MetricSet_A, MetricSet_B (size in bytes)`, while the code names that structure
-`SizeMetric`. Renaming it to `MetricSet` would collide with the Data
-Extractor's `MetricSet`, which carries entirely different fields, and the two
-would have to be disambiguated by module at every use in the Report Generator.
-The distinct name was kept for clarity and is recorded here as a deliberate
-divergence from the table's wording rather than from its meaning.
+*`SizeMetric`.* The Performance Analyzer names its output structure
+`SizeMetric` rather than reusing `MetricSet`, which the Data Extractor already
+uses for a structure with entirely different fields. Two distinct names for two
+distinct shapes keep the Report Generator's imports unambiguous, and the
+chapter does not name the Performance Analyzer's output type, so nothing
+constrains the choice.
 
 **Suite.** 235 tests passing, 4 skipped on Windows. Package coverage 98%.
 
@@ -561,9 +667,8 @@ that component's section, and in Section 4.9 of the thesis.
   rule the screen does contain, covered by
   `test_eliminating_one_rule_violation_yields_a_delta_of_minus_one`; and PoC-3,
   the CVE delta read from the Trivy JSON.
-* **Repository note:** `DESIGN_CHAPTER.md`, the Markdown working copy of the
-  chapter held in this repository, still carries the PoC-4 sentence at line 132
-  and has not yet received the same edit as the manuscript.
+* **Repository state:** `DESIGN_CHAPTER.md` no longer carries the PoC-4
+  sentence; the working copy and the manuscript agree.
 
 ---
 
@@ -1601,17 +1706,15 @@ instruction does not enter the result. Behaviour after the change:
 Two tests were replaced by three: the former deletion negative became a positive
 for the mixed case, and two negatives now cover plain deletion. 75 tests pass.
 
-⚠️ **Chapter divergence to resolve.** Section 4.1.3 (third challenge) and
-`PROJECT_CONTEXT.md` still state that a change whose commands "disappeared
-without trace" is classified as a deletion and not reported. The code no longer
-enforces that strictly. The text has to be updated to describe the evidence-of-
-merging criterion actually implemented.
+**Aligned with the design chapter.** Section 4.1.3 (third challenge) and
+`PROJECT_CONTEXT.md` both describe the fusion-proof criterion the code
+implements: positive evidence of merging is what triggers R01, and a reduction
+in RUN count without structural fusion is classified as a deletion and not
+reported. Text and code agree.
 
-**Pending, recorded for the Report Generator.** RF7 lists the delta keys as
-`delta_size, delta_warnings, delta_hadolint, delta_logical_instructions`, which
-duplicates the warning key and omits the CVE one. Confirmed with the author: the
-code will emit `delta_size`, `delta_cves`, `delta_warnings` and
-`delta_logical_instructions`; the chapter text is corrected separately.
+**Delta key names, settled.** RF7 names the four keys `delta_size`,
+`delta_warnings`, `delta_cves` and `delta_logical_instructions`, which is
+exactly what the Report Generator emits.
 
 ---
 
@@ -1706,7 +1809,7 @@ go-ahead under the standard workflow.
 - Directional: changing only the default value of an existing identifier is
   a modification, and removing an ARG is the reverse path — both yield an
   empty result.
-- `instructions_before` is empty in the Detection, as with R03.
+- `instructions_before` is empty in the DetectionResult, as with R03.
 
 **Testing.** Positives: minimal mock pair (`ARG APP_VERSION=1.0` before the
 FROM), ARG without default, CRLF variant, WORKDIR/CMD noise, and combined
@@ -1734,7 +1837,7 @@ mechanical logic → full test suite → 100% green → log).
 - A new name appended to an existing multi-variable ENV (`ENV A=1` →
   `ENV A=1 B=2`) counts as an addition: the instruction now declares a name
   that did not exist before.
-- `instructions_before` is empty in the Detection: an addition has no
+- `instructions_before` is empty in the DetectionResult: an addition has no
   counterpart instruction in version A.
 
 **Testing.** Positives: minimal mock pair, CRLF variant, WORKDIR/RUN noise,
@@ -1823,10 +1926,10 @@ logical single units, which regex line matching cannot do.
   2026-07-05): the engine records ALL identified refactorings into a
   cumulative result list, and any deterministic resolution relies strictly
   on the rule-registry indexing order, decoupled from the quality
-  dimensions. This replaced an earlier dimension-precedence scheme
-  (Security > Performance > Maintainability) present in a previous revision
-  of the chapter text.
-- `detect_refactorings` returns a list of typed `Detection` results naming
+  dimensions. No precedence between dimensions exists at any point: the
+  registry order is the engine's only tie-break, and it carries no quality
+  meaning.
+- `detect_refactorings` returns a list of typed `DetectionResult` objects naming
   the refactoring and the involved instructions; the negative case returns
   an **empty list**, never a speculative match (no false positives by
   construction).
@@ -1891,20 +1994,25 @@ suite).
 **Most relevant snippet.**
 
 ```python
-@rule("R02", primary_dimension="Maintainability")
+@rule
 def detect_update_base_image_tag(instructions_a, instructions_b):
-    changed = _changed_pairs(instructions_a, instructions_b)
-    if not changed:
+    froms_a, froms_b = _from_instructions(instructions_a), _from_instructions(instructions_b)
+    if not froms_a or len(froms_a) != len(froms_b):
         return None
-    for before, after in changed:
-        if before.instruction != "FROM" or after.instruction != "FROM":
-            return None
+    changed_before, changed_after = [], []
+    for before, after in zip(froms_a, froms_b):
+        if before == after:
+            continue
         pb, pa = _parse_from_value(before.value), _parse_from_value(after.value)
-        if not (pb.name == pa.name and pb.tag != pa.tag
-                and pb.digest == pa.digest and pb.flags == pa.flags
-                and pb.alias == pa.alias):
-            return None
-    return Detection("R02", "Update Base Image TAG", ...)
+        entity_preserved = (pb.name == pa.name and pb.digest == pa.digest
+                            and pb.flags == pa.flags and pb.alias == pa.alias)
+        if entity_preserved and pb.tag != pa.tag and pa.tag != "latest":
+            changed_before.append(before)
+            changed_after.append(after)
+    if not changed_before:
+        return None
+    return DetectionResult("R02", "Update Base Image TAG",
+                           tuple(changed_before), tuple(changed_after))
 ```
 
 ---

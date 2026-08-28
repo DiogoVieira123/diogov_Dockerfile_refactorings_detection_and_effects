@@ -1,2 +1,2 @@
-Tamanho em bytes: 189410351
-Tamanho em MB: 180.64 MB
+Size in bytes: 29748045
+Size in MB: 28.37 MB

@@ -1,0 +1,19 @@
+EXP-B · R02 Update Base Image TAG · Performance
+  before: 41,593,622
+  after:  29,748,045
+  delta:  -11,845,577
+  tools:  docker=29.1.3 trivy=0.72.0 trivy-db=v2@2026-07-27T19:20:18Z hadolint=2.14.0 dockerfile-parse=2.0.1
+  measured_utc: 2026-07-27T21:47:08Z
+  base_digest: n/a (mutable ubuntu tag — see note)
+
+metric: ΔSize — bytes (Docker SDK)
+base image: ubuntu tags
+controlled: nothing else in either file
+
+note: the mutable tag resolved at build time to
+  before (ubuntu:latest): ubuntu@sha256:3131b4cc82a783df6c9df078f86e01819a13594b865c2cad47bd1bca2b7063bb
+  after  (ubuntu:22.04):  ubuntu@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
+The size effect depends on which version the mutable tag resolved to
+and is therefore not attributable to the refactoring in a reproducible way.
+
+replicate: sh run_experiment.sh

@@ -1,0 +1,41 @@
+{
+  "rule": "R11",
+  "name": "Move Stage",
+  "measured_utc": "2026-07-22 21:04:54 UTC",
+  "deltas": {
+    "delta_instr": 1,
+    "delta_warnings": 0,
+    "delta_size_bytes": 1,
+    "delta_cves": 0
+  },
+  "before": {
+    "logical_instructions": 8,
+    "stages": 2,
+    "warnings_total": 0,
+    "size_bytes": 3632724,
+    "cves_unique": 0
+  },
+  "after": {
+    "logical_instructions": 9,
+    "stages": 3,
+    "warnings_total": 0,
+    "size_bytes": 3632725,
+    "cves_unique": 0
+  },
+  "definitions": {
+    "delta_instr": "Logical instructions via dockerfile-parse, COMMENT excluded, read from the Dockerfile text. An instruction spanning several physical lines through backslash continuations counts as one. BEFORE is Dockerfile.before; AFTER sums Dockerfile.after and Dockerfile.builder.",
+    "delta_warnings": "Warnings total: Hadolint findings within the unified maintainability rule set of the Hadolint wiki (reproducibility, structural correctness, usage and notation, metadata, shell SC2046/SC2086, logs DL3047 \u2014 47 codes, identical across all verification scripts). AFTER sums the warnings of Dockerfile.after and Dockerfile.builder.",
+    "delta_size_bytes": "Image size in bytes of the FINAL runtime image only, read through the Docker daemon. The builder image is never added: layers are shared, so image sizes are not additive.",
+    "delta_cves": "Distinct VulnerabilityID values reported by Trivy on the final runtime image only, not occurrences.",
+    "sign": "delta = after - before. For delta_instr the sign is read against the operation applied: consolidation reduces the count, extraction increases it, and neither is a verdict on its own."
+  },
+  "environment": {
+    "python": "3.14.4",
+    "dockerfile_parse": "2.0.1",
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": {
+      "Version": "0.72.0"
+    }
+  }
+}

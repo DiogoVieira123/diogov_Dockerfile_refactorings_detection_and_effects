@@ -1,0 +1,5 @@
+FROM debian@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+RUN apt-get update && apt-get install -y --no-install-recommends curl=7.88.1-10+deb12u15 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends openssl=3.0.20-1~deb12u2 && rm -rf /var/lib/apt/lists/*
+COPY app.txt /opt/app/app.txt
+COPY config.txt /opt/app/config.txt

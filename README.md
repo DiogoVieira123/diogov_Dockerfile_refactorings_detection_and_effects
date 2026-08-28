@@ -10,19 +10,22 @@ Supporting repository for the MSc dissertation "Dockerfile Refactorings: Detecti
 
 The dissertation proposes an extended catalogue of Dockerfile refactorings classified by quality dimension (performance, security, maintainability), and a Python prototype that automatically detects refactorings between two versions of a Dockerfile and measures their impact across three metrics: image size, vulnerability count (CVEs), and linter warnings.
 
-This repository holds the empirical material that supports the design described in Chapter 5: five rapid experiments that validate the technical feasibility of the prototype components, and four extended-catalog experiments that characterize the impact of refactorings for which no empirical measurement exists in the literature.
+This repository holds the empirical material that supports the design described in Chapter 5, and the literature review replication package.
 
 ## Structure
 
-`experiments/` — empirical material supporting Chapter 5, organized in two groups:
-- **Rapid experiments** (Table 5.1): five experiments, each validating the technical feasibility of one element of the prototype before its design was finalised.
-- **Extended catalog validation** (`experiments/extended_catalog/`): four controlled experiments measuring the impact of refactorings R06, R09, R11, and R12 on the three quality metrics.
-
-Each subfolder contains the scripts, raw tool outputs, and a README describing the objective, method, result, and (for the rapid experiments) the validated component.
-
-`prototype/` — prototype implementation (Chapter 6). Not yet included; to be added once the implementation phase is complete.
+| Path | Content |
+|---|---|
+| `experiments/` | empirical material supporting Chapter 5 |
+| `experiments/extended_catalog/` | 15 experiments measuring the impact of the catalogue's rules |
+| `literature-review/` | PRISMA replication package: raw database exports, screening scripts and logs |
+| `DESIGN_CHAPTER.md` | Chapter 5 — design of the prototype |
+| `PROJECT_CONTEXT.md` | architecture and technology constraints |
+| `requirements.txt` | Python dependencies |
 
 ## Rapid experiments
+
+Five experiments (Table 5.1), each validating the technical feasibility of one prototype component before the design was finalised.
 
 | # | Folder | Validated component |
 |---|---|---|
@@ -32,26 +35,37 @@ Each subfolder contains the scripts, raw tool outputs, and a README describing t
 | Exp 4 | `experiments/exp4-docker-sdk-size/` | Performance Analyzer (Docker SDK) |
 | Exp 5 | `experiments/exp5-dockerfile-parse-detection/` | Detection Engine (dockerfile-parse) |
 
-## Extended catalog validation
+## Extended catalog
 
-| Folder | Refactoring |
-|---|---|
-| `experiments/extended_catalog/experiment_1_R06_inline_stage/` | R06 — Inline Stage |
-| `experiments/extended_catalog/experiment_2_R09_extract_run/` | R09 — Extract RUN Instructions |
-| `experiments/extended_catalog/experiment_3_R11_move_stage/` | R11 — Move Stage |
-| `experiments/extended_catalog/experiment_4_R12_remove_run_mv/` | R12 — Remove RUN Instruction (mv command) |
+`experiments/extended_catalog/` holds 15 experiments measuring the impact of the catalogue's refactoring rules on image size, security and structure, covering R01–R09 and R11–R14 (R13 and R14 on two dimensions each). They provide first-hand data for rules the literature does not quantify.
+
+Each experiment compares two functionally equivalent Dockerfile states, built with `--no-cache` from a base image pinned by digest, with package versions pinned so that the only difference between states is the refactoring under test. Every experiment is reproduced with the same command from inside its folder:
+
+```bash
+sh run_experiment.sh
+```
+
+See `experiments/extended_catalog/README.md` for the experiment table, recorded values, prerequisites and pinning mechanisms.
+
+## Literature review
+
+`literature-review/` contains the PRISMA replication package: the raw exports from IEEE Xplore, ACM and SpringerLink, the screening scripts, and the logs recording identified records, duplicates, exclusions and included studies.
 
 ## Tools used
 
-- **Hadolint** — Dockerfile linter (warnings)
-- **Trivy** — vulnerability scanner (CVEs)
-- **Docker SDK for Python** — image size
-- **GitPython** — Git history access
-- **dockerfile-parse** — Dockerfile parsing
+| Tool | Purpose |
+|---|---|
+| Hadolint | Dockerfile linter (warnings) |
+| Trivy | vulnerability scanner (CVEs) |
+| Docker SDK for Python | image size in bytes |
+| GitPython | Git history access |
+| dockerfile-parse | logical instruction parsing |
+
+Hadolint and Trivy run as official Docker containers, so no local installation of either is required.
 
 ## Reproducing the experiments
 
-Each experiment folder contains its own README.md with the exact commands. In general, the experiments require a running Docker daemon and Python 3, with the tool-specific libraries noted in each folder. Hadolint and Trivy run as containers, so no local installation of those two is needed. The extended-catalog experiments are run with the `measure.sh` script in each folder.
+Requirements: a running Docker daemon and Python 3, plus the libraries in `requirements.txt`. Each experiment folder contains its own README with the exact command; the extended-catalog experiments all use `sh run_experiment.sh`.
 
 ## License
 

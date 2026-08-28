@@ -1,0 +1,16 @@
+EXP-A · R01 Inline RUN Instructions · Security
+  before: 146
+  after:  146
+  delta:  +0
+  tools:  docker=29.1.3 trivy=0.72.0 trivy-db=v2@2026-07-27T19:20:18Z hadolint=2.14.0 dockerfile-parse=2.0.1
+  measured_utc: 2026-07-27T21:47:08Z
+  base_digest: sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+
+metric: ΔCVEs — distinct VulnerabilityID (Trivy, final image)
+base image: debian:12-slim
+controlled: identical packages, identical pinned versions; only the layer structure differs
+
+baseline: 146 CVEs in the before state — non-zero, so an unchanged
+count is a meaningful result (N -> N, as the protocol requires).
+
+replicate: sh run_experiment.sh

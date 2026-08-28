@@ -1,0 +1,13 @@
+Item Title,Publication Title,Book Series Title,Journal Volume,Journal Issue,Item DOI,Authors,Publication Year,URL,Content Type
+Fixing Dockerfile smells: an empirical study,Empirical Software Engineering,,,,10.1007/s10664-024-10471-7,Giovanni RosaFederico ZapponeSimone ScalabrinoRocco Oliveto,2024,https://link.springer.com/article/10.1007/s10664-024-10471-7,Article
+Containerizing Java Applications with Dockerfile,When Docker Meets Java,,,,10.1007/979-8-8688-1300-9_5,Ashish Choudhary,2025,https://link.springer.com/chapter/10.1007/979-8-8688-1300-9_5,Chapter
+Methodology for&#xa0;Analyzing Dockerfile Using AI for&#xa0;Vulnerabilities,"Proceedings of the Ninth International Scientific Conference “Intelligent Information Technologies for Industry” (IITI’25), Volume 1",,,,10.1007/978-3-032-13615-2_23,Pavel SharikovAndrey Chechulin,2026,https://link.springer.com/chapter/10.1007/978-3-032-13615-2_23,Conference paper
+Oracle Dockerfile Recipes,Oracle on Docker,,,,10.1007/978-1-4842-9033-0_13,Sean Scott,2023,https://link.springer.com/chapter/10.1007/978-1-4842-9033-0_13,Chapter
+Dockerfile Syntax,Oracle on Docker,,,,10.1007/978-1-4842-9033-0_12,Sean Scott,2023,https://link.springer.com/chapter/10.1007/978-1-4842-9033-0_12,Chapter
+Understanding the Dockerfile,Practical Docker with Python,,,,10.1007/978-1-4842-7815-4_4,Sathyajith Bhat,2022,https://link.springer.com/chapter/10.1007/978-1-4842-7815-4_4,Chapter
+Understanding a DockerFile,Building and Deploying Container Workloads on Azure,,,,10.1007/978-1-4842-7807-9_3,Peter De Tender,2021,https://link.springer.com/video/segment/10.1007/978-1-4842-7807-9_3,Video segment
+An Effective Seafile Dockerfile for Raspberry Pi to Make Docker YAML Files for Treehouses,Smart Computing and Communication,,,,10.1007/978-3-030-74717-6_14,Hiroyuki TerauchiNaixue Xiong,2021,https://link.springer.com/chapter/10.1007/978-3-030-74717-6_14,Conference paper
+Latest Image Recommendation Method for Automatic Base Image Update in&#xa0;Dockerfile,Service-Oriented Computing,,,,10.1007/978-3-030-65310-1_40,Shinya KitajimaAtsuji Sekiguchi,2020,https://link.springer.com/chapter/10.1007/978-3-030-65310-1_40,Conference paper
+A clustering-based approach for mining dockerfile evolutionary trajectories,Science China Information Sciences,,,,10.1007/s11432-017-9415-3,Yang ZhangHuaimin WangVladimir Filkov,2018,https://link.springer.com/article/10.1007/s11432-017-9415-3,Article
+Understanding the Dockerfile,Practical Docker with Python,,,,10.1007/978-1-4842-3784-7_4,Sathyajith Bhat,2018,https://link.springer.com/chapter/10.1007/978-1-4842-3784-7_4,Chapter
+The Dockerfile,Docker for Data Science,,,,10.1007/978-1-4842-3012-1_5,Joshua Cook,2017,https://link.springer.com/chapter/10.1007/978-1-4842-3012-1_5,Chapter

@@ -1,17 +1,19 @@
 import docker
 
-# Liga ao Docker daemon local
+# Connect to the local Docker daemon
 client = docker.from_env()
 
-# Substitui pelo nome de uma imagem que já tens localmente
-# Para ver as tuas imagens corre: docker images
-imagem = client.images.get("poc:baseline")
+# Public, documented test image: ubuntu:22.04
+# (pull it first to make sure it is present locally;
+# the digest used is recorded in base-image-digest.txt)
+client.images.pull("ubuntu", tag="22.04")
+imagem = client.images.get("ubuntu:22.04")
 
-# Obtem o tamanho em bytes
+# Get the size in bytes
 tamanho_bytes = imagem.attrs["Size"]
 
-# Converte para MB
+# Convert to MB
 tamanho_mb = tamanho_bytes / (1024 * 1024)
 
-print(f"Tamanho em bytes: {tamanho_bytes}")
-print(f"Tamanho em MB: {tamanho_mb:.2f} MB")
+print(f"Size in bytes: {tamanho_bytes}")
+print(f"Size in MB: {tamanho_mb:.2f} MB")

@@ -8,20 +8,30 @@ Supporting repository for the MSc dissertation "Dockerfile Refactorings: Detecti
 
 ## About
 
-The dissertation proposes an extended catalogue of Dockerfile refactorings classified by quality dimension (performance, security, maintainability), and a Python prototype that automatically detects refactorings between two versions of a Dockerfile and measures their impact across three metrics: image size, vulnerability count (CVEs), and linter warnings.
+The dissertation proposes an extended catalogue of Dockerfile refactorings classified by quality dimension (performance, security, maintainability), and a Python prototype that automatically detects refactorings between two versions of a Dockerfile and measures their impact across four metrics: image size in bytes, vulnerability count (CVEs), linter warnings, and logical instruction count.
 
-This repository holds the empirical material that supports the design described in Chapter 5, and the literature review replication package.
+This repository holds the prototype, the empirical material that supports the
+design described in Chapter 5, and the literature review replication package.
+
+The prototype runs as a four-stage pipeline: data collection from the Git
+history, refactoring detection, empirical evaluation and measurement, and
+report generation. Detection is deterministic and reads structure alone —
+it never consults the catalogue or any expected answer.
 
 ## Structure
 
 | Path | Content |
 |---|---|
+| `src/` | the prototype: one module per pipeline component |
+| `tests/` | the test suite |
+| `main.py` | command-line entry point |
 | `experiments/` | empirical material supporting Chapter 5 |
 | `experiments/extended_catalog/` | 15 experiments measuring the impact of the catalogue's rules |
 | `literature-review/` | PRISMA replication package: raw database exports, screening scripts and logs |
 | `DESIGN_CHAPTER.md` | Chapter 5 — design of the prototype |
 | `PROJECT_CONTEXT.md` | architecture and technology constraints |
 | `requirements.txt` | Python dependencies |
+| `conftest.py` | empty by design: its presence puts the repository root on `sys.path` for pytest |
 
 ## Rapid experiments
 
@@ -66,6 +76,48 @@ Hadolint and Trivy run as official Docker containers, so no local installation o
 ## Reproducing the experiments
 
 Requirements: a running Docker daemon and Python 3, plus the libraries in `requirements.txt`. Each experiment folder contains its own README with the exact command; the extended-catalog experiments all use `sh run_experiment.sh`.
+
+## Running the tool
+
+Requirements: Python 3.12 or later (the commit export relies on the
+`filter="data"` argument of `tarfile.extractall`), and the libraries in
+`requirements.txt`. From the repository root:
+
+```
+pip install -r requirements.txt
+python main.py <repository> <commit_before> <commit_after> -d <dockerfile>
+```
+
+`<repository>` is the path of a local clone, the two commits are SHAs, and
+`-d` is the Dockerfile path relative to the repository root. `-o` chooses
+the report directory (default `./impact_report`) and `-c` the build context,
+which defaults to the directory holding the Dockerfile.
+
+Detection needs nothing but Python. Measurement builds both images, so
+stages 3 and 4 need a running Docker daemon; Hadolint and Trivy run as
+official containers and need no local installation.
+
+## Test suite
+
+```
+pip install -r requirements.txt
+python -m pytest
+```
+
+299 tests are collected: 294 pass and 5 are skipped, and none fails. The five
+are the end-to-end ones, each guarded by a `skipif` — one needs a local clone
+of `docker/getting-started` named by the `GETTING_STARTED_REPO` environment
+variable, the other four need a reachable Docker daemon. They run and pass
+where those are available, so the skip reports the host and not a failure.
+The remaining 294 need neither Docker nor network access.
+
+Coverage figures are reproduced with:
+
+```
+python -m pytest --cov=src --cov-report=term
+```
+
+which reports 94% over 1285 statements.
 
 ## License
 

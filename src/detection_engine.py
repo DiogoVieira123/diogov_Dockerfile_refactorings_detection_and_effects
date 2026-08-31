@@ -857,6 +857,20 @@ def _resolved_from_parts(instructions: list) -> list:
     return resolved
 
 
+def _body_opened_by(entry: Instruction, instructions: list) -> tuple:
+    """The instructions of the stage a given FROM opens.
+
+    Matched on object identity: the same Instruction objects flow from the
+    parser through the rules, and the FROMs appear in the same order as the
+    stages they open.
+    """
+    openers = [e for e in instructions if e.instruction == "FROM"]
+    stages = _stages(instructions)
+    for index, opener in enumerate(openers):
+        if opener is entry and index < len(stages):
+            return stages[index].instructions
+    return ()
+
 def _stage_identities_before(resolved: list, position: int) -> set:
     """Names an earlier stage can be referenced by, at a given FROM position.
 
@@ -872,7 +886,45 @@ def _stage_identities_before(resolved: list, position: int) -> set:
     return identities
 
 
-def _pair_from_instructions(resolved_a: list, resolved_b: list) -> list:
+def _has_a_better_home(
+    index_before: int,
+    position: int,
+    bodies_a: list,
+    bodies_b: list,
+    claimed: set,
+) -> bool:
+    """Whether an unclaimed later stage carries more of this stage's work.
+
+    Consulted only where position is about to decide a pairing. A commit
+    that extracts a build stage leaves the original stage doing exactly what
+    it did, under a new alias, and adds a runtime stage that does something
+    else entirely; from the end of the file the new stage sits where the old
+    one used to, and pairing the two reads the extraction as a base-image
+    substitution. The work each stage carries settles it, because that is
+    what a stage is.
+    """
+    home = _body_overlap(bodies_a[index_before], bodies_b[position])
+    return any(
+        _body_overlap(bodies_a[index_before], body) > home
+        for other, body in enumerate(bodies_b)
+        if other != position and other not in claimed
+    )
+
+def _body_overlap(body_a: tuple, body_b: tuple) -> int:
+    """How many instructions two stage bodies carry in common."""
+    return sum(
+        (
+            Counter(_instruction_key(entry) for entry in body_a)
+            & Counter(_instruction_key(entry) for entry in body_b)
+        ).values()
+    )
+
+def _pair_from_instructions(
+    resolved_a: list,
+    resolved_b: list,
+    instructions_a: list = None,
+    instructions_b: list = None,
+) -> list:
     """Match the FROM instructions of two states to each other.
 
     Positional alignment breaks as soon as a commit also adds or removes a
@@ -894,6 +946,13 @@ def _pair_from_instructions(resolved_a: list, resolved_b: list) -> list:
     """
     available = list(enumerate(resolved_a))
     matched = []
+    claimed = set()
+    # Stage bodies, aligned with the FROMs that open them. Absent when a
+    # caller pairs FROMs without the surrounding file, in which case the
+    # work a stage carries cannot be weighed and position decides alone.
+    bodies_a = [s.instructions for s in _stages(instructions_a or [])]
+    bodies_b = [s.instructions for s in _stages(instructions_b or [])]
+    weighable = len(bodies_a) == len(resolved_a) and len(bodies_b) == len(resolved_b)
     # The final stage is the one that produces the image in both states, so it
     # is paired before any other. Left to its turn it would find its
     # counterpart already claimed by a name match from an earlier stage, and a
@@ -902,7 +961,7 @@ def _pair_from_instructions(resolved_a: list, resolved_b: list) -> list:
     for position in order:
         after, parts_after = resolved_b[position]
         chosen = None
-        for candidate in (
+        candidates = (
             # Both the alias and the image agreeing is the strongest evidence
             # that two FROMs are the same stage, and trying it first stops a
             # bare name match from claiming a FROM that a differently-named
@@ -920,14 +979,28 @@ def _pair_from_instructions(resolved_a: list, resolved_b: list) -> list:
             # that never happened.
             lambda pair: (len(resolved_a) - 1 - pair[0]
                           == len(resolved_b) - 1 - position),
-        ):
+        )
+        for rank, candidate in enumerate(candidates):
+            positional = rank == len(candidates) - 1
             found = next((pair for pair in available if candidate(pair)), None)
-            if found is not None:
-                chosen = found
-                break
+            if found is None:
+                continue
+            if positional and weighable and _has_a_better_home(
+                found[0], position, bodies_a, bodies_b, claimed
+            ):
+                # Position is the weakest evidence there is, and here it is
+                # contradicted: another stage still standing carries more of
+                # this one's work, so that is where the stage went and this
+                # FROM opens a stage the commit added. Pairing them anyway
+                # reports a substitution for an image that was never
+                # replaced, merely joined by a new stage.
+                continue
+            chosen = found
+            break
         if chosen is None:
             continue
         available.remove(chosen)
+        claimed.add(position)
         _index, (before, parts_before) = chosen
         matched.append((position, before, parts_before, after, parts_after))
     # Restored to the order the stages appear in, so a rule reports its
@@ -964,12 +1037,39 @@ def detect_inline_run_instructions(
     merging altogether: without a surviving RUN that joins commands from two
     or more previous ones, the change is a plain deletion and is not reported.
     """
-    runs_a = _values_of(instructions_a, "RUN")
-    runs_b = _values_of(instructions_b, "RUN")
+    merged_before, merged_after = [], []
+    for stage_a, stage_b in _paired_stages(instructions_a, instructions_b):
+        before, after = _consolidated_runs(
+            _values_of(list(stage_a.instructions), "RUN"),
+            _values_of(list(stage_b.instructions), "RUN"),
+        )
+        merged_before.extend(before)
+        merged_after.extend(after)
 
+    if not merged_after:
+        return None  # no merging took place: deletion, not consolidation
+
+    return DetectionResult(
+        refactoring_id="R01",
+        refactoring_name="Inline RUN Instructions",
+        instructions_before=tuple(merged_before),
+        instructions_after=tuple(merged_after),
+    )
+
+
+def _consolidated_runs(runs_a: list, runs_b: list):
+    """The RUNs one stage merged, and the RUN they merged into.
+
+    Reads the two states of a single stage. Consolidation is what reduces a
+    stage's layer count, and a stage's layers are its own: RUNs standing in
+    different stages produce layers in different images, so folding one into
+    the other saves nothing and is not this refactoring. Judged over the
+    whole file, a commit that extracts work into a new stage and chains it
+    there reads as a consolidation of instructions that never shared a stage.
+    """
     # Directional: consolidation reduces the number of RUN instructions.
     if not runs_a or len(runs_a) <= len(runs_b):
-        return None
+        return [], []
 
     # Trace every command back to the RUN instructions that used to hold it.
     segment_origin = {}
@@ -998,16 +1098,10 @@ def detect_inline_run_instructions(
             merged_origins |= origins
 
     if not merged_after:
-        return None  # no merging took place: deletion, not consolidation
+        return [], []  # no merging took place: deletion, not consolidation
 
     merged_before = [Instruction("RUN", runs_a[i]) for i in sorted(merged_origins)]
-
-    return DetectionResult(
-        refactoring_id="R01",
-        refactoring_name="Inline RUN Instructions",
-        instructions_before=tuple(merged_before),
-        instructions_after=tuple(merged_after),
-    )
+    return merged_before, merged_after
 
 
 @rule
@@ -1049,7 +1143,7 @@ def detect_update_base_image_tag(
     changed_before = []
     changed_after = []
     for before, parts_before, after, parts_after, position in _pair_from_instructions(
-        resolved_a, resolved_b
+        resolved_a, resolved_b, instructions_a, instructions_b
     ):
         # A FROM may build on an earlier stage rather than an image. That is a
         # stage reference, not a base image, and no image rule applies to it.
@@ -1348,10 +1442,25 @@ def detect_inline_stage(
             continue  # nothing consumed this stage: not the inlined one
         if stage.identity in references_after:
             continue  # still read from: the stage survives
-        absorbed = [
-            entry for entry in stage.instructions
-            if body_after[_absorption_key(entry)] > 0
-        ]
+
+        # What the other stages already carried before the commit. An
+        # instruction the survivor held all along did not move there: two
+        # stages of one file commonly prepare identically, and deleting one
+        # of them leaves the other's copy standing untouched. Absorption is
+        # the survivor *gaining* the instruction, so the count has to rise.
+        elsewhere_before = Counter(
+            _absorption_key(entry)
+            for other in stages_a
+            if other.index != stage.index
+            for entry in other.instructions
+        )
+        remaining = Counter(body_after)
+        absorbed = []
+        for entry in stage.instructions:
+            key = _absorption_key(entry)
+            if remaining[key] > elsewhere_before[key]:
+                remaining[key] -= 1
+                absorbed.append(entry)
         if not absorbed:
             continue  # its work vanished: a deletion, not an inlining
 
@@ -1613,7 +1722,7 @@ def detect_update_base_image(
     changed_before = []
     changed_after = []
     for before, parts_before, after, parts_after, position in _pair_from_instructions(
-        resolved_a, resolved_b
+        resolved_a, resolved_b, instructions_a, instructions_b
     ):
         # A FROM naming an earlier stage is a stage reference, not an image;
         # renaming the stage it points at is R14's business, not a base-image
@@ -1630,6 +1739,16 @@ def detect_update_base_image(
         # not a substitution.
         # The entity, and only the entity: a stage renamed in the same commit
         # is R14's finding and must not hide the base-image substitution.
+        # A stage that did work and now does none was not re-based: its work
+        # left the file and the reference that replaced it is the published
+        # image that now supplies the result. Updating a base image keeps the
+        # stage building on it; emptying the stage is a different operation,
+        # and reporting a substitution here would name the mechanism of that
+        # operation as though it were one in its own right.
+        if (_body_opened_by(before, instructions_a)
+                and not _body_opened_by(after, instructions_b)):
+            continue
+
         entity_substitution = (
             parts_before.name != parts_after.name
             and parts_before.flags == parts_after.flags
@@ -2052,7 +2171,7 @@ def detect_rename_image(
     changed_before = []
     changed_after = []
     for before, parts_before, after, parts_after, _position in _pair_from_instructions(
-        resolved_a, resolved_b
+        resolved_a, resolved_b, instructions_a, instructions_b
     ):
         if before == after:
             continue

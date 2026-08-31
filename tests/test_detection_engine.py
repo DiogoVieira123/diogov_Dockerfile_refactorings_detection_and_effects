@@ -1504,6 +1504,110 @@ def test_r09_not_triggered_by_inlining_the_script_back():
     assert "R09" not in [d.refactoring_id for d in detect_refactorings(R09_AFTER, R09_BEFORE)]
 
 
+# --- Co-detection boundaries ----------------------------------------------
+#
+# A commit performs one refactoring; the mechanism of that refactoring
+# rearranges the file in ways another rule can mistake for its own. Each
+# test below fixes one such boundary.
+
+
+def test_r06_not_triggered_when_the_survivor_already_held_the_instructions():
+    # Two stages prepared identically and one was deleted. Its instructions
+    # still stand in the other, but they never moved there: absorption is the
+    # survivor gaining an instruction, not merely holding one.
+    detections = detect_refactorings(
+        "FROM golang:1.21 AS tools\n"
+        "WORKDIR /src\n"
+        "COPY . .\n"
+        "RUN go build -o /out/toolctl ./cmd/toolctl\n"
+        "FROM golang:1.21 AS compile\n"
+        "WORKDIR /src\n"
+        "COPY . .\n"
+        "RUN go build -o /out/app ./cmd/app\n"
+        "FROM debian:12-slim\n"
+        "COPY --from=compile /out/app /usr/local/bin/app\n"
+        "COPY --from=tools /out/toolctl /usr/local/bin/toolctl\n",
+        "FROM golang:1.21 AS compile\n"
+        "WORKDIR /src\n"
+        "COPY . .\n"
+        "RUN go build -o /out/app ./cmd/app\n"
+        "FROM debian:12-slim\n"
+        "COPY --from=compile /out/app /usr/local/bin/app\n"
+        "COPY --from=platform/tools:1.0 /out/toolctl /usr/local/bin/toolctl\n",
+    )
+    assert "R06" not in [d.refactoring_id for d in detections]
+
+
+def test_r01_not_triggered_when_the_runs_end_up_in_a_new_stage():
+    # Consolidation is what reduces one stage's layer count. RUNs that end up
+    # chained inside a stage the commit added never shared a stage with the
+    # ones they replaced, so no layer was saved by joining them.
+    #
+    # The same merge inside one stage is asserted first, so the fixture is
+    # known to be a consolidation the engine does recognise and the second
+    # assertion cannot pass merely because the pair says nothing to it.
+    before = (
+        "FROM debian:12-slim\n"
+        "RUN apt-get update && apt-get install -y curl\n"
+        "RUN sed -i s/a/b/ /etc/conf\n"
+    )
+    same_stage = (
+        "FROM debian:12-slim\n"
+        "RUN apt-get update && apt-get install -y curl && sed -i s/a/b/ /etc/conf\n"
+    )
+    new_stage = (
+        "FROM debian:12-slim AS prep\n"
+        "RUN apt-get update && apt-get install -y curl && sed -i s/a/b/ /etc/conf\n"
+        "FROM debian:12-slim\n"
+        "COPY --from=prep /etc/conf /etc/conf\n"
+    )
+    assert "R01" in [
+        d.refactoring_id for d in detect_refactorings(before, same_stage)
+    ]
+    assert "R01" not in [
+        d.refactoring_id for d in detect_refactorings(before, new_stage)
+    ]
+
+
+def test_r10_not_triggered_when_the_stage_was_emptied():
+    # The stage does no work any more: what replaced its base is the image
+    # that now supplies the result its own commands used to produce. That is
+    # the stage moving out, not the stage building on a different base.
+    detections = detect_refactorings(
+        "FROM debian:12-slim AS certs\n"
+        "WORKDIR /trust\n"
+        "COPY trust/ ./\n"
+        "RUN cat ./ca.crt > /opt/ca.crt\n"
+        "FROM debian:12-slim\n"
+        "COPY --from=certs /opt/ca.crt /opt/ca.crt\n",
+        "FROM platform/ca_bundle:2024.1 AS certs\n"
+        "FROM debian:12-slim\n"
+        "COPY --from=certs /opt/ca.crt /opt/ca.crt\n",
+    )
+    assert "R10" not in [d.refactoring_id for d in detections]
+
+
+def test_r10_not_triggered_when_a_stage_is_extracted():
+    # The runtime stage is new, not a replacement: the original image is
+    # still there, still doing what it did, under an alias it gained. Read
+    # from the end of the file the new stage occupies the old one's place,
+    # which is why position alone must not decide the pairing.
+    detections = detect_refactorings(
+        "FROM golang:1.21-bookworm\n"
+        "WORKDIR /src\n"
+        "COPY . .\n"
+        "RUN go build -o /usr/local/bin/app ./cmd/app\n",
+        "FROM golang:1.21-bookworm AS builder\n"
+        "WORKDIR /src\n"
+        "COPY . .\n"
+        "RUN go build -o /out/app ./cmd/app\n"
+        "FROM debian:12-slim\n"
+        "COPY --from=builder /out/app /usr/local/bin/app\n",
+    )
+    reported = [d.refactoring_id for d in detections]
+    assert "R10" not in reported
+
+
 # --- Negative cases: MUST return an empty result -------------------------------
 
 

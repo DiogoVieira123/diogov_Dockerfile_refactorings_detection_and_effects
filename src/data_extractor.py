@@ -169,11 +169,40 @@ _DOCKER_SOCKET = "/var/run/docker.sock:/var/run/docker.sock"
 # Trivy keeps its vulnerability database in a cache directory. A container
 # started with --rm loses it, so without a persistent volume every scan
 # re-downloads the database and, more importantly for RNF5, `trivy version`
-# reports no database metadata at all. The named volume gives the two scans
-# and the version query one shared database, which is what makes the recorded
-# database version the one the measurements actually used.
-TRIVY_CACHE_VOLUME = "dockerfile-refactoring-trivy-cache"
-_TRIVY_CACHE = f"{TRIVY_CACHE_VOLUME}:/root/.cache/trivy"
+# reports no database metadata at all.
+#
+# One cache per state, not one shared by both. The two scans run concurrently
+# by design, and Trivy takes a file lock on its cache when it initialises: two
+# scans sharing one directory race for that lock and the loser dies with
+# "unable to initialize fs cache: cache may be in use by another process".
+# Giving each state its own volume removes the contention at its source while
+# leaving the parallel architecture untouched — no serialisation, no retry.
+#
+# The seeding step below copies the database into a fresh per-state volume from
+# whichever volume already holds one, so an existing warm database is reused
+# rather than downloaded again. Only the 1.2 GB `db` directory is worth
+# carrying; `fanal`, the scan cache that causes the lock, is a few megabytes
+# and is deliberately left for each scan to build on its own.
+TRIVY_CACHE_VOLUME_PREFIX = "dockerfile-refactoring-trivy-cache"
+_TRIVY_CACHE_MOUNTPOINT = "/root/.cache/trivy"
+
+
+def trivy_cache_volume(label: str) -> str:
+    """Name of the cache volume dedicated to one scan state."""
+    return f"{TRIVY_CACHE_VOLUME_PREFIX}-{label}"
+
+
+def _trivy_cache_mount(label: str) -> str:
+    return f"{trivy_cache_volume(label)}:{_TRIVY_CACHE_MOUNTPOINT}"
+
+
+# Scan states, and therefore cache volumes, in the order the report presents them.
+_SCAN_STATES = ("before", "after")
+
+# Seeding is attempted once per process: the volumes persist between runs, so
+# repeating the check on every extraction would cost a container start for
+# nothing.
+_caches_prepared = False
 
 _TOOL_TIMEOUT_SECONDS = 600
 
@@ -237,13 +266,67 @@ def _parse_json(payload: bytes, label: str):
 # --- ΔCVEs — Trivy ----------------------------------------------------------------
 
 
+def _volume_has_database(label: str) -> bool:
+    """True when this state's cache volume already holds a vulnerability database."""
+    probe = subprocess.run(
+        ["docker", "run", "--rm", "-v", _trivy_cache_mount(label),
+         "alpine:3.20", "sh", "-c",
+         f"test -d {_TRIVY_CACHE_MOUNTPOINT}/db && echo yes || echo no"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+    )
+    return probe.stdout.strip() == b"yes"
+
+
+def prepare_scan_caches() -> None:
+    """Give every scan state a cache volume holding the vulnerability database.
+
+    A state whose volume is already populated is left alone. An empty one is
+    seeded by copying the ``db`` directory from a state that has it, so a
+    database warmed by an earlier run is reused instead of downloaded again.
+    When no state has one yet, nothing is copied and the first scan downloads
+    it as it always would.
+
+    Failures here are not fatal: seeding is an optimisation, and a scan whose
+    cache is empty simply fetches the database itself.
+    """
+    global _caches_prepared
+    if _caches_prepared:
+        return
+    _caches_prepared = True
+
+    populated = [state for state in _SCAN_STATES if _volume_has_database(state)]
+    if not populated:
+        # Nothing to copy from. Fall back to the volume the shared-cache design
+        # used before this split, if it still exists.
+        legacy = TRIVY_CACHE_VOLUME_PREFIX
+        source_mount = f"{legacy}:/source"
+    else:
+        source_mount = f"{trivy_cache_volume(populated[0])}:/source"
+
+    for state in _SCAN_STATES:
+        if state in populated:
+            continue
+        subprocess.run(
+            ["docker", "run", "--rm",
+             "-v", source_mount,
+             "-v", f"{trivy_cache_volume(state)}:/target",
+             "alpine:3.20", "sh", "-c",
+             "test -d /source/db && cp -a /source/db /target/db || true"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+
+
 def _scan_image(image_reference: str, label: str) -> bytes:
-    """Run a Trivy vulnerability scan against one built image, in JSON mode."""
+    """Run a Trivy vulnerability scan against one built image, in JSON mode.
+
+    The scan mounts the cache volume belonging to its own state, so the two
+    concurrent scans never contend for the same file lock.
+    """
     return _run(
         [
             "docker", "run", "--rm",
             "-v", _DOCKER_SOCKET,
-            "-v", _TRIVY_CACHE,
+            "-v", _trivy_cache_mount(label),
             TRIVY_IMAGE, "image", "--quiet", "--format", "json",
             image_reference,
         ],
@@ -417,6 +500,10 @@ def extract_metrics(
     instructions_before = count_logical_instructions(dockerfile_a)
     instructions_after = count_logical_instructions(dockerfile_b)
 
+    # Each scan needs its own populated cache before the two are dispatched
+    # together; seeding afterwards would race with the scans it serves.
+    prepare_scan_caches()
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         futures = {
             "scan_before": pool.submit(_scan_image, image_before, "before"),
@@ -498,7 +585,7 @@ def tool_provenance() -> ToolProvenance:
 
     trivy_report = _parse_json(
         _run(
-            ["docker", "run", "--rm", "-v", _TRIVY_CACHE,
+            ["docker", "run", "--rm", "-v", _trivy_cache_mount("before"),
              TRIVY_IMAGE, "version", "--format", "json"],
             "Trivy version query",
         ),

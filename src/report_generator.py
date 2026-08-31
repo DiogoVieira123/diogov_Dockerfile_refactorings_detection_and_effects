@@ -98,9 +98,10 @@ def _metric_block(before: int, after: int, delta_key: str, delta: int) -> Dict:
 def _instruction_pairs(instructions: Sequence) -> list:
     """Instructions of a DetectionResult as JSON-serialisable pairs.
 
-    The Instruction NamedTuple would serialise as a bare array, which loses
-    which element is the keyword; naming the fields keeps the report readable
-    without the reader consulting the source.
+    Naming the fields keeps the report readable without the reader
+    consulting the source, and states the two the report carries: an
+    Instruction also records the typography R13 reads, which is evidence for
+    a rule and not a property of the instruction worth publishing.
     """
     return [
         {"instruction": entry.instruction, "value": entry.value}

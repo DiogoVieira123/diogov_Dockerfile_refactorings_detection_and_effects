@@ -246,6 +246,65 @@ def test_each_state_is_built_from_its_own_commit_tree(wired, tmp_path):
     assert "aaa" in context_before and "bbb" in context_after
 
 
+def test_the_build_context_is_the_dockerfile_directory(wired, tmp_path):
+    # A Dockerfile in a subdirectory builds with that subdirectory as context,
+    # which is how `docker build services/api` resolves its COPY sources.
+    pipeline.run_analysis(
+        "/repo", "aaa", "bbb", tmp_path, dockerfile_path="services/api/Dockerfile"
+    )
+    build = next(c for c in wired.calls if c[0] == "build")
+    for context in (build[1], build[2]):
+        assert Path(context).name == "api"
+        assert Path(context).parent.name == "services"
+
+
+def test_a_root_dockerfile_keeps_the_tree_root_as_context(wired, tmp_path):
+    # Path("Dockerfile").parent is ".", so the context stays the export root.
+    pipeline.run_analysis("/repo", "aaa", "bbb", tmp_path, dockerfile_path="Dockerfile")
+    build = next(c for c in wired.calls if c[0] == "build")
+    export = next(c for c in wired.calls if c[0] == "export")
+    assert Path(build[1]) == Path(build[1]).resolve()
+    assert "fake-tree-aaa" in build[1]
+
+
+def test_an_explicit_context_overrides_the_dockerfile_directory(wired, tmp_path):
+    # The override exists for layouts where the COPY sources sit outside the
+    # Dockerfile's own directory — a monorepo building from its root.
+    pipeline.run_analysis(
+        "/repo", "aaa", "bbb", tmp_path,
+        dockerfile_path="services/api/Dockerfile",
+        build_context="build/shared",
+    )
+    build = next(c for c in wired.calls if c[0] == "build")
+    for context in (build[1], build[2]):
+        assert Path(context).name == "shared"
+        assert Path(context).parent.name == "build"
+
+
+def test_an_explicit_context_is_resolved_inside_each_commit_tree(wired, tmp_path):
+    # The override names a directory of the commit, not a host path: both
+    # states must still build from their own exported tree, so no working-tree
+    # file can reach a measurement.
+    pipeline.run_analysis(
+        "/repo", "aaa", "bbb", tmp_path, build_context="build/shared"
+    )
+    build = next(c for c in wired.calls if c[0] == "build")
+    assert "fake-tree-aaa" in build[1]
+    assert "fake-tree-bbb" in build[2]
+    assert build[1] != build[2]
+
+
+def test_the_repository_root_can_be_named_as_the_context(wired, tmp_path):
+    pipeline.run_analysis(
+        "/repo", "aaa", "bbb", tmp_path,
+        dockerfile_path="services/api/Dockerfile", build_context=".",
+    )
+    build = next(c for c in wired.calls if c[0] == "build")
+    export = next(c for c in wired.calls if c[0] == "export")
+    assert Path(build[1]) == Path(build[1]).resolve()
+    assert "services" not in build[1]
+
+
 def test_the_commit_trees_are_exported_from_the_given_repository(wired, tmp_path):
     pipeline.run_analysis("/repo", "aaa", "bbb", tmp_path)
     exports = [c for c in wired.calls if c[0] == "export"]
@@ -334,36 +393,64 @@ def test_the_cli_returns_zero_and_prints_the_summary(wired, tmp_path, capsys):
 
 
 @pytest.mark.parametrize(
-    "exception, expected_code",
+    "exception, expected_code, expected_stage",
     [
-        (CommitNotFoundError("x"), cli.EXIT_VCS),
-        (DockerfileParseError("x"), cli.EXIT_PARSE),
-        (ImageBuildError("x"), cli.EXIT_BUILD),
-        (PerformanceAnalyzerError("x"), cli.EXIT_SIZE),
-        (DataExtractorError("x"), cli.EXIT_EXTRACT),
+        (CommitNotFoundError("x"), cli.EXIT_VCS, "Stage 1"),
+        (DockerfileParseError("x"), cli.EXIT_PARSE, "Stage 2"),
+        (ImageBuildError("x"), cli.EXIT_BUILD, "Stage 3 (preparation: image build)"),
+        (PerformanceAnalyzerError("x"), cli.EXIT_SIZE, "Stage 3 (measurement: image size)"),
+        (DataExtractorError("x"), cli.EXIT_EXTRACT, "Stage 3 (measurement: extraction)"),
     ],
     ids=["vcs", "parse", "build", "size", "extract"],
 )
 def test_each_failure_maps_to_its_own_exit_code(
-    monkeypatch, tmp_path, capsys, exception, expected_code
+    monkeypatch, tmp_path, capsys, exception, expected_code, expected_stage
 ):
     # RNF4 asks for distinct informative exceptions; the exit code is what keeps
-    # them distinguishable once the process has ended.
+    # them distinguishable once the process has ended, and the stage label is
+    # what makes the failure legible in a captured log.
     def failing(*args, **kwargs):
         raise exception
 
     monkeypatch.setattr(cli, "run_analysis", failing)
     assert cli.main(["/repo", "aaa", "bbb", "-o", str(tmp_path)]) == expected_code
-    assert "Analysis failed" in capsys.readouterr().err
+
+    reported = capsys.readouterr().err
+    assert "[ERROR]" in reported
+    assert expected_stage in reported
+    assert "aaa..bbb" in reported  # the failing pair is named
+    assert "no report written" in reported  # the run stopped, nothing partial
+
+
+def test_a_build_failure_stops_before_any_report_is_written(monkeypatch, tmp_path):
+    """Stage 3 failing must abort the pair, leaving no partial artifacts."""
+    def failing(*args, **kwargs):
+        raise ImageBuildError("the build did not complete")
+
+    monkeypatch.setattr(cli, "run_analysis", failing)
+    assert cli.main(["/repo", "aaa", "bbb", "-o", str(tmp_path)]) == cli.EXIT_BUILD
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_the_cli_accepts_a_dockerfile_path(monkeypatch, tmp_path):
     captured = {}
 
-    def spy(repo, before, after, output, *, dockerfile_path):
-        captured.update(dockerfile_path=dockerfile_path)
+    def spy(repo, before, after, output, *, dockerfile_path, build_context):
+        captured.update(dockerfile_path=dockerfile_path, build_context=build_context)
         raise ImageBuildError("stop here")
 
     monkeypatch.setattr(cli, "run_analysis", spy)
     cli.main(["/repo", "a", "b", "-o", str(tmp_path), "-d", "sub/Dockerfile"])
-    assert captured == {"dockerfile_path": "sub/Dockerfile"}
+    assert captured == {"dockerfile_path": "sub/Dockerfile", "build_context": None}
+
+
+def test_the_cli_passes_an_explicit_context_through(monkeypatch, tmp_path):
+    captured = {}
+
+    def spy(repo, before, after, output, *, dockerfile_path, build_context):
+        captured.update(dockerfile_path=dockerfile_path, build_context=build_context)
+        raise ImageBuildError("stop here")
+
+    monkeypatch.setattr(cli, "run_analysis", spy)
+    cli.main(["/repo", "a", "b", "-o", str(tmp_path), "-d", "sub/Dockerfile", "-c", "."])
+    assert captured == {"dockerfile_path": "sub/Dockerfile", "build_context": "."}

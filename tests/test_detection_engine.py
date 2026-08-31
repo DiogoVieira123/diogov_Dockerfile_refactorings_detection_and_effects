@@ -9,6 +9,9 @@ import pytest
 
 from src.detection_engine import (
     _RULES,
+    LAYOUT_HEREDOC,
+    LAYOUT_MULTI,
+    LAYOUT_SINGLE,
     DetectionResult,
     DockerfileParseError,
     Instruction,
@@ -146,21 +149,26 @@ RUN apt-get update && \\
 
 
 def test_r01_detects_four_to_one_consolidation():
+    # The commit does two things to the same instruction and both are
+    # reported: the four RUNs were merged into one (R01) and that one was
+    # written across continuations where the originals were single lines
+    # (R13). A consolidation that keeps the result on one line reports R01
+    # alone, which the partial-consolidation tests below show.
     detections = detect_refactorings(R01_BEFORE, R01_AFTER)
-    assert [d.refactoring_id for d in detections] == ["R01"]
+    assert [d.refactoring_id for d in detections] == ["R01", "R13"]
     detection = detections[0]
     assert detection.refactoring_name == "Inline RUN Instructions"
     # the four merged RUNs and the single surviving one
     assert len(detection.instructions_before) == 4
     assert len(detection.instructions_after) == 1
-    assert detection.instructions_before[0] == ("RUN", "apt-get update")
+    assert detection.instructions_before[0] == Instruction("RUN", "apt-get update")
 
 
 def test_r01_detects_with_crlf_line_endings():
     detections = detect_refactorings(
         R01_BEFORE.replace("\n", "\r\n"), R01_AFTER.replace("\n", "\r\n")
     )
-    assert [d.refactoring_id for d in detections] == ["R01"]
+    assert [d.refactoring_id for d in detections] == ["R01", "R13"]
 
 
 def test_r01_detected_despite_noise_in_other_instructions():
@@ -181,8 +189,8 @@ def test_r01_partial_consolidation_reports_only_the_merged_runs():
     )
     assert [d.refactoring_id for d in detections] == ["R01"]
     detection = detections[0]
-    assert detection.instructions_before == (("RUN", "echo a"), ("RUN", "echo b"))
-    assert detection.instructions_after == (("RUN", "echo a && echo b"),)
+    assert detection.instructions_before == (Instruction("RUN", "echo a"), Instruction("RUN", "echo b"))
+    assert detection.instructions_after == (Instruction("RUN", "echo a && echo b"),)
 
 
 def test_r01_detected_when_inlining_is_mixed_with_a_deletion():
@@ -196,8 +204,8 @@ def test_r01_detected_when_inlining_is_mixed_with_a_deletion():
     assert [d.refactoring_id for d in detections] == ["R01"]
     detection = detections[0]
     # only the two RUNs that were actually merged are reported
-    assert detection.instructions_before == (("RUN", "echo a"), ("RUN", "echo b"))
-    assert detection.instructions_after == (("RUN", "echo a && echo b"),)
+    assert detection.instructions_before == (Instruction("RUN", "echo a"), Instruction("RUN", "echo b"))
+    assert detection.instructions_after == (Instruction("RUN", "echo a && echo b"),)
 
 
 def test_r01_not_triggered_by_plain_deletion():
@@ -247,6 +255,28 @@ def test_multiline_run_is_one_logical_instruction():
 def test_crlf_input_parses_like_lf_input():
     crlf = MULTILINE_RUN.replace("\n", "\r\n")
     assert parse_instructions(crlf) == parse_instructions(MULTILINE_RUN)
+
+
+def test_layout_class_records_how_each_instruction_was_written():
+    instructions = parse_instructions(
+        "FROM alpine:3.19\n"
+        "RUN apk add curl \\\n    && curl --version\n"
+        "RUN <<EOS\napk add git\nEOS\n"
+        "COPY a b\n"
+    )
+    assert [i.layout for i in instructions] == [
+        LAYOUT_SINGLE,
+        LAYOUT_MULTI,
+        LAYOUT_HEREDOC,
+        LAYOUT_SINGLE,
+    ]
+
+
+def test_layout_is_not_part_of_instruction_identity():
+    # Typography is metadata about an instruction, not part of what it is: a
+    # rule that rebuilds one to report it must not compare unequal to the
+    # parsed original merely for lacking a layout it never observed.
+    assert Instruction("RUN", "echo a", LAYOUT_MULTI) == Instruction("RUN", "echo a")
 
 
 # --- R02 — Update Base Image TAG (mock pair mirrors PoC-2) ---------------------
@@ -326,8 +356,8 @@ def test_r02_detected_despite_noise_in_other_instructions():
     )
     assert [d.refactoring_id for d in detections] == ["R02"]
     detection = detections[0]
-    assert detection.instructions_before == (("FROM", "ubuntu:latest"),)
-    assert detection.instructions_after == (("FROM", "ubuntu:22.04"),)
+    assert detection.instructions_before == (Instruction("FROM", "ubuntu:latest"),)
+    assert detection.instructions_after == (Instruction("FROM", "ubuntu:22.04"),)
 
 
 def test_r02_detected_when_run_also_changes():
@@ -338,7 +368,7 @@ def test_r02_detected_when_run_also_changes():
         "FROM ubuntu:22.04\nRUN apt-get update && apt-get install -y curl\n",
     )
     assert [d.refactoring_id for d in detections] == ["R02"]
-    assert detections[0].instructions_after == (("FROM", "ubuntu:22.04"),)
+    assert detections[0].instructions_after == (Instruction("FROM", "ubuntu:22.04"),)
 
 
 def test_r02_multistage_reports_only_the_tag_only_from():
@@ -351,11 +381,11 @@ def test_r02_multistage_reports_only_the_tag_only_from():
     )
     assert [d.refactoring_id for d in detections] == ["R02", "R10"]
     r02 = detections[0]
-    assert r02.instructions_before == (("FROM", "node:18 AS run"),)
-    assert r02.instructions_after == (("FROM", "node:20 AS run"),)
+    assert r02.instructions_before == (Instruction("FROM", "node:18 AS run"),)
+    assert r02.instructions_after == (Instruction("FROM", "node:20 AS run"),)
     r10 = detections[1]
-    assert r10.instructions_before == (("FROM", "ubuntu:22.04 AS build"),)
-    assert r10.instructions_after == (("FROM", "alpine:3.19 AS build"),)
+    assert r10.instructions_before == (Instruction("FROM", "ubuntu:22.04 AS build"),)
+    assert r10.instructions_after == (Instruction("FROM", "alpine:3.19 AS build"),)
 
 
 # --- R08 — Replace ADD with COPY (mock pair mirrors PoC-4) ----------------------
@@ -369,8 +399,8 @@ def test_r08_detects_add_replaced_with_copy():
     assert [d.refactoring_id for d in detections] == ["R08"]
     detection = detections[0]
     assert detection.refactoring_name == "Replace ADD with COPY"
-    assert detection.instructions_before == (("ADD", "app.txt /app.txt"),)
-    assert detection.instructions_after == (("COPY", "app.txt /app.txt"),)
+    assert detection.instructions_before == (Instruction("ADD", "app.txt /app.txt"),)
+    assert detection.instructions_after == (Instruction("COPY", "app.txt /app.txt"),)
 
 
 def test_r08_detects_multiple_replacements():
@@ -475,7 +505,7 @@ def test_r03_detects_added_env():
     detection = detections[0]
     assert detection.refactoring_name == "Add ENV Variable"
     assert detection.instructions_before == ()
-    assert detection.instructions_after == (("ENV", "APP_VERSION=1.0"),)
+    assert detection.instructions_after == (Instruction("ENV", "APP_VERSION=1.0"),)
 
 
 def test_r03_detects_with_crlf_line_endings():
@@ -548,7 +578,7 @@ def test_r04_detects_added_arg():
     detection = detections[0]
     assert detection.refactoring_name == "Add ARG Instruction"
     assert detection.instructions_before == ()
-    assert detection.instructions_after == (("ARG", "APP_VERSION=1.0"),)
+    assert detection.instructions_after == (Instruction("ARG", "APP_VERSION=1.0"),)
 
 
 def test_r04_detects_arg_without_default():
@@ -611,8 +641,8 @@ def test_r10_detects_base_image_substitution():
     assert [d.refactoring_id for d in detections] == ["R10"]
     detection = detections[0]
     assert detection.refactoring_name == "Update Base Image"
-    assert detection.instructions_before == (("FROM", "ubuntu:22.04"),)
-    assert detection.instructions_after == (("FROM", "alpine:3.19"),)
+    assert detection.instructions_before == (Instruction("FROM", "ubuntu:22.04"),)
+    assert detection.instructions_after == (Instruction("FROM", "alpine:3.19"),)
 
 
 def test_r10_detects_with_crlf_line_endings():
@@ -650,24 +680,30 @@ def test_r10_and_r03_reported_together():
     assert [d.refactoring_id for d in detections] == ["R03", "R10"]
 
 
-def test_r10_not_triggered_when_alias_also_changes():
-    # Entity substitution combined with a stage-alias change on the same
-    # FROM is not a clean R10; the rule stays silent for that FROM.
+def test_r10_reported_when_the_alias_changes_in_the_same_commit():
+    # Each FROM rule judges one dimension: R10 the entity, R14 the alias. A
+    # commit that substitutes the base and renames the stage did both, so the
+    # substitution is reported rather than hidden by the rename. R14 stays
+    # silent here because the image itself changed, which is R10's finding.
     detections = detect_refactorings(
         "FROM ubuntu:22.04 AS build\nCMD [\"sh\"]\n",
         "FROM alpine:3.19 AS builder\nCMD [\"sh\"]\n",
     )
-    assert detections == []
+    assert [d.refactoring_id for d in detections] == ["R10"]
 
 
-def test_r10_not_triggered_when_stage_count_differs():
-    # A FROM added alongside the substitution changes the stage structure:
-    # alignment is ambiguous (Extract/Inline Stage territory) — silent.
+def test_r10_follows_the_final_stage_when_a_stage_is_added():
+    # A build stage prepended in the same commit changes the stage count, but
+    # the image that ships still has a base and that base was substituted. The
+    # final stage is paired first, so the substitution reported is
+    # ubuntu -> alpine and not the meaningless ubuntu -> golang.
     detections = detect_refactorings(
         "FROM ubuntu:22.04\nCMD [\"sh\"]\n",
         "FROM golang:1.22 AS build\nRUN go build\nFROM alpine:3.19\nCMD [\"sh\"]\n",
     )
-    assert detections == []
+    detection = next(d for d in detections if d.refactoring_id == "R10")
+    assert detection.instructions_before == (Instruction("FROM", "ubuntu:22.04"),)
+    assert detection.instructions_after == (Instruction("FROM", "alpine:3.19"),)
 
 
 # --- R14 — Rename Image -----------------------------------------------------------
@@ -694,8 +730,8 @@ def test_r14_detects_naming_an_unnamed_stage():
     assert [d.refactoring_id for d in detections] == ["R14"]
     detection = detections[0]
     assert detection.refactoring_name == "Rename Image"
-    assert detection.instructions_before == (("FROM", "golang:1.22"),)
-    assert detection.instructions_after == (("FROM", "golang:1.22 AS build"),)
+    assert detection.instructions_before == (Instruction("FROM", "golang:1.22"),)
+    assert detection.instructions_after == (Instruction("FROM", "golang:1.22 AS build"),)
 
 
 def test_r14_detects_alias_rename():
@@ -730,14 +766,16 @@ def test_r14_not_triggered_when_alias_disappears():
     assert detect_refactorings(R14_AFTER, R14_BEFORE) == []
 
 
-def test_r14_not_triggered_when_image_also_changes():
-    # Alias mutation combined with a tag change on the same FROM is neither
-    # a clean R14 (image touched) nor R02 (alias touched): empty result.
+def test_r14_and_r02_are_both_reported_when_tag_and_alias_change():
+    # The dimensions are independent: R02 owns the tag, R14 the alias. Pinning
+    # a version while renaming a stage is two refactorings in one commit, and
+    # requiring each rule to find the other dimension untouched would report
+    # neither.
     detections = detect_refactorings(
         "FROM node:18 AS build\nCMD [\"node\"]\n",
         "FROM node:20 AS builder\nCMD [\"node\"]\n",
     )
-    assert detections == []
+    assert sorted(d.refactoring_id for d in detections) == ["R02", "R14"]
 
 
 def test_r14_and_r02_reported_together():
@@ -779,7 +817,7 @@ def test_r12_detects_removed_run_mv():
     # both RUN mv instructions removed, both COPYs now landing directly
     assert len(detection.instructions_before) == 2
     assert len(detection.instructions_after) == 2
-    assert detection.instructions_after[0] == ("COPY", "app.conf /app/config/app.conf")
+    assert detection.instructions_after[0] == Instruction("COPY", "app.conf /app/config/app.conf")
 
 
 def test_r12_detects_with_crlf_line_endings():
@@ -808,14 +846,41 @@ def test_r12_detected_despite_noise_in_other_instructions():
     assert [d.refactoring_id for d in detections] == ["R12"]
 
 
+def test_r12_tolerates_the_commands_the_relocation_carries_with_it():
+    # A real commit writes the move alongside the scaffolding it needs: a
+    # `set -eux` for fail-fast, a `chmod` the surviving COPY expresses with
+    # --chmod, and an `rm` clearing the staging directory the move emptied.
+    # None of those is work of its own, so none disqualifies the rule.
+    detections = detect_refactorings(
+        "FROM alpine:3.20\nCOPY app.sh /opt/staging/app.sh\n"
+        "RUN set -eux && mkdir -p /usr/local/bin"
+        " && mv /opt/staging/app.sh /usr/local/bin/app.sh"
+        " && chmod 0755 /usr/local/bin/app.sh && rm -rf /opt/staging\n",
+        "FROM alpine:3.20\nCOPY --chmod=0755 app.sh /usr/local/bin/app.sh\n",
+    )
+    assert "R12" in [d.refactoring_id for d in detections]
+
+
 def test_r12_not_triggered_when_the_run_does_more_than_move():
-    # The RUN also changes permissions, so its sole purpose is not the move.
+    # Installing a package is work of its own; the RUN is not there solely to
+    # relocate, so removing it is not this refactoring.
     detections = detect_refactorings(
         "FROM alpine:3.20\nCOPY app.sh /tmp/app.sh\n"
-        "RUN mv /tmp/app.sh /opt/app.sh && chmod +x /opt/app.sh\n",
+        "RUN mv /tmp/app.sh /opt/app.sh && apk add --no-cache curl\n",
         "FROM alpine:3.20\nCOPY app.sh /opt/app.sh\n",
     )
-    assert detections == []
+    assert "R12" not in [d.refactoring_id for d in detections]
+
+
+def test_r12_not_triggered_when_the_run_removes_something_else():
+    # The `rm` guard: clearing the staging path is part of the relocation,
+    # deleting anything else is not.
+    detections = detect_refactorings(
+        "FROM alpine:3.20\nCOPY app.sh /tmp/app.sh\n"
+        "RUN mv /tmp/app.sh /opt/app.sh && rm -rf /var/cache/apk\n",
+        "FROM alpine:3.20\nCOPY app.sh /opt/app.sh\n",
+    )
+    assert "R12" not in [d.refactoring_id for d in detections]
 
 
 def test_r12_not_triggered_when_the_destination_did_not_move_into_the_copy():
@@ -831,6 +896,20 @@ def test_r12_not_triggered_when_the_destination_did_not_move_into_the_copy():
 def test_r12_not_triggered_by_adding_a_run_mv():
     # Reverse path: introducing the extra layer is not a refactoring.
     assert detect_refactorings(R12_AFTER, R12_BEFORE) == []
+
+
+def test_r12_detects_a_move_whose_transfer_used_a_trailing_separator():
+    # The COPY writes to '/tmp/assets/' and the move reads '/tmp/assets'.
+    # The trailing separator names no different directory, and comparing
+    # the two as text would hide the relocation.
+    detections = detect_refactorings(
+        "FROM alpine:3.20\n"
+        "COPY deploy/assets/ /tmp/assets/\n"
+        "RUN mv /tmp/assets /opt/assets\n",
+        "FROM alpine:3.20\n"
+        "COPY deploy/assets/ /opt/assets/\n",
+    )
+    assert "R12" in [d.refactoring_id for d in detections]
 
 
 # --- R13 — Update RUN Instruction ----------------------------------------------
@@ -900,13 +979,70 @@ def test_r13_not_triggered_when_a_version_changes():
     assert detections == []
 
 
-def test_r13_not_triggered_when_the_run_count_changes():
-    # Fewer RUN instructions is consolidation or removal territory.
+def test_r13_not_triggered_when_a_consolidation_keeps_one_line():
+    # The two RUNs were merged, but the result is written on one line just
+    # as they were: the typography did not change, so there is no reflow to
+    # report and the consolidation is R01's finding alone.
     detections = detect_refactorings(
         "FROM alpine:3.20\nRUN echo a\nRUN echo b\n",
         "FROM alpine:3.20\nRUN echo a && echo b\n",
     )
     assert "R13" not in [d.refactoring_id for d in detections]
+
+
+def test_r13_detects_a_reflow_that_parameterises_an_argument():
+    # Split across continuations while a literal became a variable the same
+    # commit declares. The reflow is R13; the new ENV is R03's finding, and
+    # both are reported.
+    detections = detect_refactorings(
+        "FROM alpine:3.20\n"
+        "RUN mkdir -p /etc/api && chmod 0644 /etc/api/rate.conf\n",
+        "FROM alpine:3.20\n"
+        "ENV RATE_CONFIG=/etc/api/rate.conf\n"
+        "RUN mkdir -p /etc/api \\\n    && chmod 0644 ${RATE_CONFIG}\n",
+    )
+    assert "R13" in [d.refactoring_id for d in detections]
+
+
+def test_r13_detects_several_runs_reflowed_into_one():
+    # Consolidating and reformatting are two operations on the same
+    # instruction, and each is its own finding.
+    detections = detect_refactorings(
+        "FROM alpine:3.20\nRUN mkdir -p /opt/x\nRUN chmod -R a+r /opt/x\n",
+        "FROM alpine:3.20\nRUN mkdir -p /opt/x \\\n && chmod -R a+r /opt/x\n",
+    )
+    assert [d.refactoring_id for d in detections] == ["R01", "R13"]
+
+
+def test_r13_not_triggered_when_another_keyword_is_reformatted():
+    # The catalogue defines this refactoring over RUN instructions. A LABEL
+    # broken across lines is a reformatting the catalogue does not contain,
+    # and reporting it would invent a refactoring type.
+    detections = detect_refactorings(
+        'FROM alpine:3.20\nLABEL a=\\"1" b=\\"2" c=\\"3"\n',
+        'FROM alpine:3.20\nLABEL a=\\"1" \\\\\n      b=\\"2" \\\\\n      c=\\"3"\n',
+    )
+    assert detections == []
+
+
+def test_r13_not_triggered_when_a_reflow_swaps_one_literal_for_another():
+    # Words left and words arrived, but nothing that arrived is a variable
+    # reference, so the package was swapped rather than parameterised.
+    detections = detect_refactorings(
+        "FROM alpine:3.20\nRUN apk add --no-cache curl\n",
+        "FROM alpine:3.20\nRUN apk add --no-cache \\\n    git\n",
+    )
+    assert detections == []
+
+
+def test_r13_not_triggered_when_a_reflow_drops_an_argument():
+    # Nothing arrived, so the instruction lost work rather than changing
+    # how it is written.
+    detections = detect_refactorings(
+        "FROM alpine:3.20\nRUN apk add --no-cache curl git\n",
+        "FROM alpine:3.20\nRUN apk add --no-cache \\\n    curl\n",
+    )
+    assert detections == []
 
 
 # --- R07 — Sort Instructions ----------------------------------------------------
@@ -934,8 +1070,8 @@ def test_r07_detects_cache_improving_reordering():
     assert detection.refactoring_name == "Sort Instructions"
     # the FROM did not move, so only the four rearranged instructions appear
     assert len(detection.instructions_before) == 4
-    assert detection.instructions_before[0] == ("COPY", "app.txt /opt/app/app.txt")
-    assert detection.instructions_after[0] == ("RUN", "apk add --no-cache curl=8.14.1-r2")
+    assert detection.instructions_before[0] == Instruction("COPY", "app.txt /opt/app/app.txt")
+    assert detection.instructions_after[0] == Instruction("RUN", "apk add --no-cache curl=8.14.1-r2")
 
 
 def test_r07_detects_with_crlf_line_endings():
@@ -974,6 +1110,54 @@ def test_r07_not_triggered_when_order_is_unchanged():
     assert detect_refactorings(R07_AFTER, R07_AFTER) == []
 
 
+def test_r07_detected_when_an_instruction_is_also_removed():
+    # Granularity: the rearrangement is judged on the instructions both
+    # states hold. One dropped in the same commit is another rule's finding
+    # and must not silence this one.
+    detections = detect_refactorings(
+        "FROM alpine:3.20\n"
+        "COPY app/ /srv/app/\n"
+        "RUN apk add --no-cache python3\n"
+        "RUN echo obsolete\n",
+        "FROM alpine:3.20\n"
+        "RUN apk add --no-cache python3\n"
+        "COPY app/ /srv/app/\n",
+    )
+    assert "R07" in [d.refactoring_id for d in detections]
+
+
+def test_r07_recognises_a_transfer_whose_destination_also_changed():
+    # A transfer is identified by what it brings in, not by where it lands:
+    # the destination is an operand another refactoring may rewrite in the
+    # same commit, and this rule judges position.
+    detections = detect_refactorings(
+        "FROM alpine:3.20\n"
+        "COPY assets/ /tmp/assets/\n"
+        "RUN apk add --no-cache python3\n",
+        "FROM alpine:3.20\n"
+        "RUN apk add --no-cache python3\n"
+        "COPY assets/ /opt/assets/\n",
+    )
+    assert "R07" in [d.refactoring_id for d in detections]
+
+
+def test_r07_not_triggered_when_a_stage_is_inlined():
+    # The transfer sits later because the stage holding it disappeared, not
+    # because anyone sorted anything. Cache validity is a property of one
+    # layer chain, and a FROM starts a new one.
+    detections = detect_refactorings(
+        "FROM alpine:3.20 AS prep\n"
+        "COPY conf/ /tmp/conf/\n"
+        "FROM alpine:3.20\n"
+        "RUN apk add --no-cache python3\n"
+        "COPY --from=prep /tmp/conf /etc/conf\n",
+        "FROM alpine:3.20\n"
+        "RUN apk add --no-cache python3\n"
+        "COPY conf/ /etc/conf/\n",
+    )
+    assert "R07" not in [d.refactoring_id for d in detections]
+
+
 # --- R06 — Inline Stage ---------------------------------------------------------
 
 # Mock pair mirroring the catalogue experiment for R06: a builder stage that
@@ -1002,11 +1186,11 @@ def test_r06_detects_inlined_stage():
     detection = detections[0]
     assert detection.refactoring_name == "Inline Stage"
     # the COPY --from that consumed the stage, and the work it absorbed
-    assert detection.instructions_before[0] == (
+    assert detection.instructions_before[0] == Instruction(
         "COPY",
         "--from=builder /app/app.sh /app/app.sh",
     )
-    assert ("RUN", "chmod +x /app/app.sh") in detection.instructions_after
+    assert Instruction("RUN", "chmod +x /app/app.sh") in detection.instructions_after
 
 
 def test_r06_detects_with_crlf_line_endings():
@@ -1077,12 +1261,16 @@ CMD ["./testapp"]
 
 
 def test_r05_detects_extracted_stage():
+    # R14 is reported alongside, and correctly so: extracting a stage means
+    # naming the stage it was extracted from, and `FROM rust:1.78` gaining
+    # `AS builder` is the image untouched with an alias appearing, which is
+    # exactly what R14 detects. Non-exclusion reports both.
     detections = detect_refactorings(R05_BEFORE, R05_AFTER)
-    assert [d.refactoring_id for d in detections] == ["R05"]
-    detection = detections[0]
+    assert "R05" in [d.refactoring_id for d in detections]
+    detection = next(d for d in detections if d.refactoring_id == "R05")
     assert detection.refactoring_name == "Extract Stage"
     # the build work that moved into the new stage
-    assert ("RUN", "cargo build --release") in detection.instructions_before
+    assert Instruction("RUN", "cargo build --release") in detection.instructions_before
     # the COPY --from that now brings the artifact across
     assert detection.instructions_after[0].instruction == "COPY"
     assert "--from=builder" in detection.instructions_after[0].value
@@ -1092,7 +1280,7 @@ def test_r05_detects_with_crlf_line_endings():
     detections = detect_refactorings(
         R05_BEFORE.replace("\n", "\r\n"), R05_AFTER.replace("\n", "\r\n")
     )
-    assert [d.refactoring_id for d in detections] == ["R05"]
+    assert "R05" in [d.refactoring_id for d in detections]
 
 
 def test_r05_not_triggered_when_the_new_stage_does_new_work():
@@ -1152,9 +1340,9 @@ def test_r11_detects_moved_stage():
     detection = next(d for d in detections if d.refactoring_id == "R11")
     assert detection.refactoring_name == "Move Stage"
     # the body that left the file
-    assert ("RUN", "cp /build/app.txt /build/artifact.txt") in detection.instructions_before
+    assert Instruction("RUN", "cp /build/app.txt /build/artifact.txt") in detection.instructions_before
     # the emptied stage now naming the externally built image
-    assert detection.instructions_after == (("FROM", "r11-builder:1.0 AS builder"),)
+    assert detection.instructions_after == (Instruction("FROM", "r11-builder:1.0 AS builder"),)
 
 
 def test_r11_detects_with_crlf_line_endings():
@@ -1223,12 +1411,12 @@ def test_r09_detects_run_extracted_into_a_script():
     assert detection.refactoring_name == "Extract RUN Instructions"
     # the shell sequence that left the Dockerfile
     assert detection.instructions_before == (
-        ("RUN", "mkdir -p /app/data && cp /app/app.txt /app/data/app.txt && chmod -R 755 /app/data"),
+        Instruction("RUN", "mkdir -p /app/data && cp /app/app.txt /app/data/app.txt && chmod -R 755 /app/data"),
     )
     # the script arriving, and the call that replaced the sequence
     assert detection.instructions_after == (
-        ("COPY", "setup.sh /app/setup.sh"),
-        ("RUN", "/app/setup.sh"),
+        Instruction("COPY", "setup.sh /app/setup.sh"),
+        Instruction("RUN", "/app/setup.sh"),
     )
 
 
@@ -1352,10 +1540,12 @@ def test_r02_not_triggered_by_unpinning_to_latest():
     ) == []
 
 
-def test_r02_not_triggered_by_stage_alias_change():
+def test_r02_not_triggered_when_the_image_entity_changes():
+    # The tag is R02's dimension, but only while the image stays the same
+    # image: substituting the base is R10's finding, not a tag update.
     detections = detect_refactorings(
         "FROM node:18 AS build\nCMD [\"node\"]\n",
-        "FROM node:20 AS builder\nCMD [\"node\"]\n",
+        "FROM alpine:3.19 AS build\nCMD [\"node\"]\n",
     )
     assert "R02" not in [d.refactoring_id for d in detections]
 

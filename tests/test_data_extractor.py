@@ -86,6 +86,10 @@ def fake_tools(monkeypatch):
         if lints is None:
             lints = [_hadolint_report([]), _hadolint_report([])]
         tools = FakeTools(scans, lints, failures)
+        # Cache seeding provisions the environment before any tool runs; it is
+        # not measurement, and letting the fake serve its docker calls would
+        # consume the recorded tool output.
+        monkeypatch.setattr(data_extractor, "prepare_scan_caches", lambda: None)
         monkeypatch.setattr(subprocess, "run", tools)
         return tools
 
@@ -251,15 +255,30 @@ def test_both_images_are_scanned_read_only(fake_tools):
     assert sorted(scanned) == sorted([IMAGE_BEFORE, IMAGE_AFTER])
 
 
-def test_scans_share_one_trivy_database_cache(fake_tools):
-    # RNF5: without the shared volume every --rm scan re-downloads the database
-    # and no database version can be recorded for the report.
+def test_each_scan_uses_its_own_trivy_cache_volume(fake_tools):
+    # The two scans run concurrently; sharing one cache directory makes them
+    # race for Trivy's file lock, and the loser dies with "cache may be in use
+    # by another process". One volume per state removes the contention without
+    # touching the parallel architecture.
     tools = fake_tools()
     extract_metrics(DOCKERFILE_A, DOCKERFILE_B, IMAGE_BEFORE, IMAGE_AFTER)
     scan_commands = [c for c in tools.commands if data_extractor.TRIVY_IMAGE in c]
     assert len(scan_commands) == 2
+
+    mounts = []
     for command in scan_commands:
-        assert any(data_extractor.TRIVY_CACHE_VOLUME in token for token in command)
+        cache = [t for t in command if data_extractor.TRIVY_CACHE_VOLUME_PREFIX in t]
+        assert len(cache) == 1, "each scan mounts exactly one cache volume"
+        mounts.append(cache[0])
+
+    assert mounts[0] != mounts[1], "the two scans must not share a cache volume"
+    assert {data_extractor.trivy_cache_volume("before"),
+            data_extractor.trivy_cache_volume("after")} == {m.split(":")[0] for m in mounts}
+
+
+def test_the_cache_volume_name_identifies_its_state():
+    assert data_extractor.trivy_cache_volume("before").endswith("-before")
+    assert data_extractor.trivy_cache_volume("after").endswith("-after")
 
 
 def test_hadolint_reads_the_dockerfile_from_stdin(fake_tools):
@@ -488,12 +507,15 @@ def test_provenance_reports_all_three_versions(fake_versions):
     assert provenance.trivy_db_version == "2026-08-10T01:00:06Z"
 
 
-def test_provenance_queries_trivy_against_the_shared_database_cache(fake_versions):
-    # The database version must be the one the scans used, not an empty cache.
+def test_provenance_queries_trivy_against_a_populated_cache(fake_versions):
+    # The database version must be the one the scans used, not an empty cache,
+    # so the query reads the volume the 'before' scan populated.
     versions = fake_versions()
     data_extractor.tool_provenance()
     trivy_command = next(c for c in versions.commands if data_extractor.TRIVY_IMAGE in c)
-    assert any(data_extractor.TRIVY_CACHE_VOLUME in token for token in trivy_command)
+    assert any(
+        data_extractor.trivy_cache_volume("before") in token for token in trivy_command
+    )
 
 
 def test_provenance_reports_an_unpopulated_database_without_inventing_a_version(fake_versions):

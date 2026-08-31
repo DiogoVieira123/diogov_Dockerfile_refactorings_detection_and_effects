@@ -4,3 +4,11 @@ __pycache__/
 .vscode/
 .idea/
 *.log
+47FILTROS.md
+DESIGN_CHAPTER.md
+IMPLEMENTATION_LOG.*
+PROJECT_CONTEXT.md
+mapping.json
+.coverage
+execution_artifacts/
+run_evaluation.py

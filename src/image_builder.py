@@ -13,18 +13,26 @@ and concurrently, which is what makes their parallel execution genuine rather
 than nominal, and what keeps the most expensive operation of the pipeline —
 building the images — from happening twice.
 
-Two properties govern the implementation:
+Three properties govern the implementation:
 
-* **Nothing is written to the working directory.** The build context is
-  assembled as a tar archive in memory and handed to the daemon as a byte
-  stream, so analysing a repository never leaves temporary Dockerfiles or
-  context copies behind on the caller's disk.
+* **The build runs on BuildKit.** ``docker buildx build --load`` is invoked as
+  a subprocess, because the Docker SDK for Python speaks only to the classic
+  ``/build`` endpoint and has no BuildKit option. The classic builder rejects
+  the modern Dockerfile syntax — ``COPY --chmod``, ``RUN --mount``, heredocs —
+  which real Dockerfiles use. ``--load`` places the result in the daemon's
+  image store, so the size measurement still reads ``attrs["Size"]`` through
+  the SDK and byte precision is untouched (RNF1).
+* **The caller's files are never written to.** The Dockerfile under analysis is
+  staged in a temporary directory of its own and passed with ``--file``, so the
+  exported commit tree serving as the build context is left exactly as Git
+  wrote it.
 * **No image outlives the analysis.** Both images are removed when the
   preparation context closes, whatever happens inside it. Left unchecked, a
   catalogue-wide run would accumulate dozens of images and exhaust the
   daemon's storage.
 
-All Docker SDK failures — daemon unavailable, build error — surface as
+Every failure — an unreachable daemon, an absent buildx, a build that does not
+complete, a build that overruns its timeout — surfaces as
 :class:`ImageBuildError` (RNF4), so the pipeline can distinguish a preparation
 failure from a defect of its own or from a measurement failure downstream.
 """
@@ -32,14 +40,14 @@ failure from a defect of its own or from a measurement failure downstream.
 from __future__ import annotations
 
 import contextlib
-import io
-import tarfile
+import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Iterator, List, NamedTuple, Optional, Union
 
 import docker
-from docker.errors import APIError, BuildError, DockerException, ImageNotFound
+from docker.errors import APIError, DockerException, ImageNotFound
 from docker.models.images import Image
 
 
@@ -65,15 +73,15 @@ class BuiltImagePair(NamedTuple):
     image_after: str  # image ID of the later commit's state
 
 
-# Path the injected Dockerfile takes inside the in-memory build context.
+# Name the staged Dockerfile takes in its temporary directory.
 _DOCKERFILE_ARCNAME = "Dockerfile"
 
 # Tag prefix for the throwaway images; Docker rejects upper case in tags, so
 # the prefix stays lower case and the suffix is a hex UUID.
 _TAG_PREFIX = "dockerfile-refactoring-analysis"
 
-# Directories that never belong in a build context sent to the daemon.
-_EXCLUDED_CONTEXT_DIRS = frozenset({".git", "__pycache__", ".venv", "node_modules"})
+# A hung build must not stall a batch of analyses indefinitely.
+_BUILD_TIMEOUT_SECONDS = 1800
 
 
 def _connect() -> docker.DockerClient:
@@ -91,45 +99,6 @@ def _connect() -> docker.DockerClient:
         ) from exc
 
 
-def _context_archive(
-    dockerfile_content: str, context_path: Optional[Path]
-) -> io.BytesIO:
-    """Assemble the build context as an in-memory tar stream.
-
-    The Dockerfile is injected into the archive rather than read from disk, so
-    the content delivered by the VCS Connector is built exactly as it was
-    committed and no file is written to the working directory. When
-    ``context_path`` is given its files travel with it, which is what allows
-    Dockerfiles carrying COPY instructions to build; without one the context
-    holds the Dockerfile alone.
-
-    Any file already named ``Dockerfile`` at the root of the context is
-    skipped, since the injected content is the state under analysis.
-    """
-    stream = io.BytesIO()
-    with tarfile.open(fileobj=stream, mode="w") as archive:
-        if context_path is not None:
-            for entry in sorted(context_path.rglob("*")):
-                if not entry.is_file():
-                    continue
-                relative = entry.relative_to(context_path)
-                if _EXCLUDED_CONTEXT_DIRS.intersection(relative.parts):
-                    continue
-                arcname = relative.as_posix()
-                if arcname == _DOCKERFILE_ARCNAME:
-                    continue  # superseded by the state under analysis
-                archive.add(entry, arcname=arcname)
-
-        payload = dockerfile_content.encode("utf-8")
-        info = tarfile.TarInfo(name=_DOCKERFILE_ARCNAME)
-        info.size = len(payload)
-        info.mtime = 0  # fixed timestamp: the archive is a deterministic input
-        archive.addfile(info, io.BytesIO(payload))
-
-    stream.seek(0)
-    return stream
-
-
 def _build_image(
     client: docker.DockerClient,
     dockerfile_content: str,
@@ -138,37 +107,106 @@ def _build_image(
 ) -> Image:
     """Build one Dockerfile state and return the resulting image.
 
+    The build runs through ``docker buildx build``, invoked as a subprocess,
+    because BuildKit is what the modern Dockerfile syntax needs: ``COPY
+    --chmod``, ``RUN --mount`` and heredoc forms are all rejected by the
+    classic builder, and the Docker SDK for Python only speaks to the classic
+    ``/build`` endpoint — it has no BuildKit option at all.
+
+    ``--load`` is what keeps the rest of the pipeline working. BuildKit writes
+    to its own cache by default and the image never reaches the daemon's image
+    store; ``--load`` puts it there, so the size measurement can still fetch it
+    with ``client.images.get`` and read ``attrs["Size"]``. The measurement path
+    is unchanged and byte precision is preserved (RNF1).
+
+    The Dockerfile is written to a staging directory of its own and passed with
+    ``-f``, never into the context. The content analysed is the blob the VCS
+    Connector delivered, which may differ from any Dockerfile sitting in the
+    context, and writing it outside keeps the exported commit tree untouched.
+
     Args:
-        client: an open Docker client.
+        client: an open Docker client, used only to fetch the built image.
         dockerfile_content: the Dockerfile text for this state.
-        context_path: directory whose files accompany the build, or None.
+        context_path: directory whose files accompany the build, or None for a
+            context holding nothing but the Dockerfile.
         label: which state is being built ("before"/"after"), used only to
             make the diagnostic message identify the failing side.
 
     Raises:
-        ImageBuildError: the build did not complete (RNF4).
+        ImageBuildError: buildx is unavailable, the build did not complete, it
+            exceeded the timeout, or the built image cannot be fetched (RNF4).
     """
     tag = f"{_TAG_PREFIX}:{uuid.uuid4().hex}"
+
+    with tempfile.TemporaryDirectory(prefix="dockerfile-staging-") as staging:
+        dockerfile_file = Path(staging) / _DOCKERFILE_ARCNAME
+        # Written as bytes so the state built is the blob byte for byte, with
+        # its own line endings, rather than a re-encoded copy.
+        dockerfile_file.write_bytes(dockerfile_content.encode("utf-8"))
+
+        context = context_path if context_path is not None else Path(staging)
+        command = [
+            "docker", "buildx", "build",
+            "--load",  # put the result in the daemon's image store
+            "--file", str(dockerfile_file),
+            "--tag", tag,
+            "--progress", "plain",
+            str(context),
+        ]
+
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=_BUILD_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise ImageBuildError(
+                f"Could not build the '{label}' Dockerfile state: the docker "
+                f"command is not available."
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ImageBuildError(
+                f"Docker build of the '{label}' Dockerfile state did not "
+                f"finish within {_BUILD_TIMEOUT_SECONDS} seconds."
+            ) from exc
+
+        if completed.returncode != 0:
+            raise ImageBuildError(
+                f"Docker build of the '{label}' Dockerfile state failed: "
+                f"{_build_failure_detail(completed)}"
+            )
+
+    # Fetched after the staging directory is gone: the image lives in the
+    # daemon now, and this is the handle the size measurement reads.
     try:
-        image, _logs = client.images.build(
-            fileobj=_context_archive(dockerfile_content, context_path),
-            custom_context=True,
-            dockerfile=_DOCKERFILE_ARCNAME,
-            tag=tag,
-            rm=True,  # discard intermediate containers
-            forcerm=True,  # discard them even when the build fails
-            pull=False,  # a cached base image keeps the two states comparable
-        )
-    except BuildError as exc:
+        return client.images.get(tag)
+    except (ImageNotFound, APIError, DockerException) as exc:
         raise ImageBuildError(
-            f"Docker build of the '{label}' Dockerfile state failed: {exc}"
+            f"The '{label}' image was built but could not be fetched from the "
+            f"daemon: {exc}"
         ) from exc
-    except (APIError, DockerException) as exc:
-        raise ImageBuildError(
-            f"Docker daemon error while building the '{label}' Dockerfile "
-            f"state: {exc}"
-        ) from exc
-    return image
+
+
+def _build_failure_detail(completed: "subprocess.CompletedProcess") -> str:
+    """The most informative line of a failed build's output.
+
+    buildx writes its progress to stderr, so the reason a build failed is the
+    last substantive line rather than the first. Lines that only mark progress
+    carry no diagnosis and are skipped.
+    """
+    text = completed.stderr.decode("utf-8", errors="replace").strip()
+    if not text:
+        text = completed.stdout.decode("utf-8", errors="replace").strip()
+    lines = [
+        line.strip() for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    if not lines:
+        return f"exit code {completed.returncode}, no diagnostic output"
+    return lines[-1][:400]
 
 
 def _remove_images(client: docker.DockerClient, images: List[Image]) -> None:

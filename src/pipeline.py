@@ -50,7 +50,7 @@ import tarfile
 import tempfile
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Iterator, Union
+from typing import Iterator, Optional, Union
 
 import git
 
@@ -177,6 +177,7 @@ def run_analysis(
     output_dir: Union[str, Path],
     *,
     dockerfile_path: str = DEFAULT_DOCKERFILE_PATH,
+    build_context: Optional[str] = None,
 ) -> ReportArtifacts:
     """Run the complete pipeline and write the report artifacts.
 
@@ -185,6 +186,11 @@ def run_analysis(
     therefore see the repository exactly as it stood at each commit, which is
     what makes the size delta attributable to the change between them rather
     than to whatever the working tree happens to hold today.
+
+    Within each exported tree the build context is the directory holding the
+    Dockerfile, so a Dockerfile at ``services/api/Dockerfile`` builds with
+    ``services/api/`` as its context and finds the ``package.json`` and ``src``
+    beside it. A Dockerfile at the repository root gets the tree root.
 
     Args:
         repository_path: path of a local Git repository, already cloned.
@@ -195,6 +201,15 @@ def run_analysis(
             absent.
         dockerfile_path: the single Dockerfile path tracked through both
             commits, relative to the repository root (RF1).
+        build_context: directory to build from, relative to the repository
+            root. Defaults to the directory holding the Dockerfile, which is
+            what `docker build <dir>` uses. Give a path when the COPY and ADD
+            sources live elsewhere — the repository root of a monorepo, say.
+
+            The path is resolved inside each commit's exported tree, never on
+            the host, so overriding it changes which directory of that commit
+            serves as the context and never lets today's working tree into a
+            measurement.
 
     Returns:
         The paths of the three written artifacts.
@@ -222,8 +237,27 @@ def run_analysis(
     # need them and unwinds them in reverse order on the way out, whether the
     # block ends normally or by exception.
     with contextlib.ExitStack() as trees:
-        context_before = trees.enter_context(commit_context(repository, commit_before))
-        context_after = trees.enter_context(commit_context(repository, commit_after))
+        tree_before = trees.enter_context(commit_context(repository, commit_before))
+        tree_after = trees.enter_context(commit_context(repository, commit_after))
+
+        # The build context defaults to the directory that holds the
+        # Dockerfile. A Dockerfile at services/api/Dockerfile reads its COPY
+        # sources relative to services/api/, which is how
+        # `docker build services/api` resolves them, so rooting the context
+        # anywhere else makes those files unreachable.
+        # `Path("Dockerfile").parent` is ".", so a Dockerfile at the repository
+        # root still gets the tree root.
+        #
+        # An explicit build_context overrides that choice. It is joined onto
+        # each commit's exported tree rather than used as a host path, so both
+        # states still build from their own commit and the guarantee that no
+        # working-tree file reaches a measurement is preserved.
+        relative_context = (
+            Path(build_context) if build_context else Path(dockerfile_path).parent
+        )
+        context_before = tree_before / relative_context
+        context_after = tree_after / relative_context
+
         images = trees.enter_context(
             build_image_pair(
                 before,

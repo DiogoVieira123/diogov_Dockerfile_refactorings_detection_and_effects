@@ -32,7 +32,7 @@ an empty list, never a partial or speculative match.
 import io
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, NamedTuple, Optional
 
 from dockerfile_parse import DockerfileParser
@@ -47,11 +47,28 @@ class DockerfileParseError(Exception):
     """
 
 
-class Instruction(NamedTuple):
-    """One logical Dockerfile instruction (multi-line RUNs already joined)."""
+# How an instruction was written in the source. R13 refactors presentation
+# rather than content, so the typography is evidence and has to survive
+# parsing, which is where continuations and heredocs are otherwise dissolved.
+LAYOUT_SINGLE = "single"  # written on one physical line
+LAYOUT_MULTI = "multi"  # split across backslash continuations
+LAYOUT_HEREDOC = "heredoc"  # written as a heredoc block
+
+
+@dataclass(frozen=True)
+class Instruction:
+    """One logical Dockerfile instruction (multi-line RUNs already joined).
+
+    ``layout`` is excluded from equality and hashing on purpose: two
+    instructions carrying the same command are the same instruction whatever
+    their typography, and a rule that rebuilds one to report it must not
+    compare unequal to the parsed original merely for lacking a layout it
+    never observed. Only R13, which is about typography, reads the field.
+    """
 
     instruction: str  # e.g. "FROM", "RUN" (upper-case, per dockerfile-parse)
     value: str  # argument string with continuations resolved
+    layout: str = field(default=LAYOUT_SINGLE, compare=False)
 
 
 @dataclass(frozen=True)
@@ -68,6 +85,113 @@ class DetectionResult:
     refactoring_name: str  # e.g. "Update Base Image TAG"
     instructions_before: tuple  # involved Instruction objects in version A
     instructions_after: tuple  # involved Instruction objects in version B
+
+
+# A heredoc opener: ``<<EOS``, ``<<-EOS``, ``<<"EOS"`` or ``<<'EOS'``.
+_HEREDOC_START = re.compile(r'''<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?''')
+
+
+def _collapse_heredocs(content: str) -> str:
+    """Fold heredoc blocks into the instruction line that opens them.
+
+    dockerfile-parse 2.0.1 predates the heredoc syntax: given
+
+        RUN <<EOS
+        apt-get update
+        apt-get clean
+        EOS
+
+    it reports ``RUN <<EOS`` and then invents an instruction per body line
+    (``APT-GET: update``), so the commands never reach the rules. Folding the
+    block into one logical line before parsing restores them without changing
+    the parser, which Experiment 5 validated and the design chapter names.
+
+    The body is joined with ``&&`` because that is what the heredoc form means:
+    a heredoc with ``set -e`` fails on the first error exactly as a chain does,
+    so the two forms carry the same commands with the same semantics. The
+    collapsed line is what a rule reports as the instruction involved, so a
+    detection on a heredoc names its commands rather than the opener alone.
+    """
+    lines = content.split(chr(10))
+    output = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = _HEREDOC_START.search(line)
+        if not match:
+            output.append(line)
+            index += 1
+            continue
+
+        terminator = match.group(1)
+        body = []
+        cursor = index + 1
+        while cursor < len(lines) and lines[cursor].strip() != terminator:
+            if lines[cursor].strip():
+                body.append(lines[cursor].strip())
+            cursor += 1
+
+        if cursor >= len(lines):
+            # No terminator: not a heredoc after all, leave the text alone.
+            output.append(line)
+            index += 1
+            continue
+
+        head = line[: match.start()].rstrip()
+        tail = line[match.end():].strip()
+        collapsed = " && ".join(body)
+        output.append(" ".join(part for part in (head, tail, collapsed) if part))
+        index = cursor + 1
+    return chr(10).join(output)
+
+
+# A backslash closing a physical line: the continuation marker.
+_CONTINUATION = re.compile(r"\\[ \t]*$")
+
+
+def _layout_classes(content: str) -> list:
+    """Presentation class of each logical instruction, in file order.
+
+    Read from the source as committed, because the information does not
+    survive parsing: dockerfile-parse resolves continuations into the
+    argument string and ``_collapse_heredocs`` folds heredoc bodies away,
+    so by the time a rule sees an instruction its typography is gone. R13
+    detects a change of typography, so the classes are collected here and
+    travel on the Instruction.
+
+    The scan segments instructions the way the Dockerfile format does: a
+    heredoc runs to its terminator, a line closing with a backslash
+    continues into the next, anything else is one line. Blanks and comments
+    are skipped, which is the subset ``parse_instructions`` returns, so the
+    two align one-to-one; when they do not, the caller discards the result
+    rather than risk pairing a class with the wrong instruction.
+    """
+    lines = content.split(chr(10))
+    classes = []
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if not stripped or stripped.startswith("#"):
+            index += 1
+            continue
+
+        opener = _HEREDOC_START.search(lines[index])
+        if opener:
+            terminator = opener.group(1)
+            index += 1
+            while index < len(lines) and lines[index].strip() != terminator:
+                index += 1
+            index += 1  # consume the terminator
+            classes.append(LAYOUT_HEREDOC)
+            continue
+
+        spans = False
+        while index < len(lines) and _CONTINUATION.search(lines[index].rstrip()):
+            spans = True
+            index += 1
+        index += 1
+        classes.append(LAYOUT_MULTI if spans else LAYOUT_SINGLE)
+    return classes
 
 
 def parse_instructions(dockerfile_content: str) -> list:
@@ -89,9 +213,10 @@ def parse_instructions(dockerfile_content: str) -> list:
             f"Dockerfile content must be a string, got "
             f"{type(dockerfile_content).__name__}."
         )
+    normalised = dockerfile_content.replace("\r\n", "\n")
     try:
         parser = DockerfileParser(fileobj=io.BytesIO())
-        parser.content = dockerfile_content.replace("\r\n", "\n")
+        parser.content = _collapse_heredocs(normalised)
         structure = parser.structure
     except Exception as exc:  # noqa: BLE001 — any parser failure is malformed content
         raise DockerfileParseError(
@@ -99,10 +224,18 @@ def parse_instructions(dockerfile_content: str) -> list:
             f"instructions: {exc}"
         ) from exc
 
+    entries = [entry for entry in structure if entry["instruction"] != "COMMENT"]
+    layouts = _layout_classes(normalised)
+    if len(layouts) != len(entries):
+        # The scan and the parser disagree on where instructions begin, so
+        # no class can be trusted to belong to its instruction. Reporting
+        # every instruction as single-line costs R13 a detection; guessing
+        # would cost it a wrong one.
+        layouts = [LAYOUT_SINGLE] * len(entries)
+
     return [
-        Instruction(entry["instruction"], entry["value"])
-        for entry in structure
-        if entry["instruction"] != "COMMENT"
+        Instruction(entry["instruction"], entry["value"], layout)
+        for entry, layout in zip(entries, layouts)
     ]
 
 
@@ -178,16 +311,97 @@ def _from_instructions(instructions: list) -> list:
 _SHELL_SEPARATORS = re.compile(r"&&|\|\||;")
 
 
+# A RUN may be written as a shell string, as an exec-form JSON array, or as a
+# heredoc block. All three carry commands; only the packaging differs.
+_EXEC_FORM = re.compile(r"^\s*\[\s*(.+)\s*\]\s*$", re.S)
+_HEREDOC_OPENER = re.compile(r'''<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?''')
+# Shell scaffolding that expresses fail-fast rather than a command of its own:
+# `&&` provides it in the chained form, `set -e` in the heredoc form.
+# A shell or build variable reference: ``$NAME`` or ``${NAME}``.
+_VARIABLE_REFERENCE = re.compile(r"\$\{?[A-Za-z_]")
+_SHELL_DIRECTIVE = re.compile(r"^set\s+[-+][a-zA-Z]+(\s+[-+][a-zA-Z]+)*$")
+
+
+def _shell_body(value: str) -> str:
+    """The commands a RUN carries, freed from the form they are written in.
+
+    An exec-form ``RUN ["/bin/sh", "-c", "..."]`` hides its commands inside a
+    JSON array, and a heredoc hides them after the opener. Both are unwrapped
+    so the segment split below sees commands rather than punctuation.
+    """
+    text = value.strip()
+
+    match = _EXEC_FORM.match(text)
+    if match:
+        try:
+            import json as _json
+            elements = _json.loads(text)
+        except Exception:  # noqa: BLE001 — not valid JSON: treat as a shell string
+            return text
+        if isinstance(elements, list) and elements:
+            # ["/bin/sh", "-c", "<commands>"] carries its commands in the last
+            # element; a bare ["prog", "arg"] is a single command.
+            if len(elements) >= 3 and str(elements[0]).endswith("sh"):
+                return str(elements[-1])
+            return " ".join(str(element) for element in elements)
+        return text
+
+    opener = _HEREDOC_OPENER.search(text)
+    if opener:
+        terminator = opener.group(1)
+        lines = text.splitlines()
+        body = []
+        started = False
+        for line in lines:
+            if not started:
+                if opener.group(0) in line:
+                    started = True
+                continue
+            if line.strip() == terminator:
+                break
+            body.append(line)
+        if body:
+            return chr(10).join(body)
+    return text
+
+
 def _shell_segments(value: str) -> list:
     """Command segments of a RUN body, whitespace-normalised.
 
     Consolidating RUN instructions chains what were separate commands with
     ``&&`` (or ``;`` / ``||``), so splitting on those operators recovers the
-    commands the separate instructions used to hold. Whitespace is normalised
-    because a multi-line RUN joined by backslash continuations keeps the
-    indentation of the physical lines inside its argument string.
+    commands the separate instructions used to hold. A heredoc separates the
+    same commands by newline instead, so newlines split too. Whitespace is
+    normalised because a multi-line RUN joined by backslash continuations keeps
+    the indentation of the physical lines inside its argument string.
     """
-    return [" ".join(part.split()) for part in _SHELL_SEPARATORS.split(value) if part.split()]
+    body = _shell_body(value)
+    parts = []
+    for line in body.splitlines():
+        parts.extend(_SHELL_SEPARATORS.split(line))
+    return [" ".join(part.split()) for part in parts if part.split()]
+
+
+def _run_commands(value: str) -> Counter:
+    """The words a RUN carries, as a multiset, ignoring how they are packaged.
+
+    Two RUN bodies match when they hold the same words, whatever their layout:
+    chained with ``&&``, split across backslash continuations, wrapped in an
+    exec-form array or written as a heredoc. Counting words rather than whole
+    commands is what also makes argument reordering match, since sorting a
+    package list alphabetically changes the order of the words and nothing
+    else.
+
+    Shell directives such as ``set -eux`` are dropped: they express fail-fast,
+    which the chained form expresses with ``&&`` instead, so their presence or
+    absence marks a change of notation and not a change of commands.
+    """
+    return Counter(
+        word
+        for segment in _shell_segments(value)
+        if not _SHELL_DIRECTIVE.match(segment)
+        for word in segment.split()
+    )
 
 
 _FILE_TRANSFER_INSTRUCTIONS = ("COPY", "ADD")
@@ -227,6 +441,18 @@ def _stages(instructions: list) -> list:
         Stage(index=index, reference=reference, alias=alias, instructions=tuple(body))
         for (index, reference, alias), body in zip(stages, bodies)
     ]
+
+
+def _names_a_stage(reference: str, stages: list) -> bool:
+    """True when a ``--from=`` reference names a stage of this Dockerfile.
+
+    A ``--from`` may name a stage or an image. Telling them apart is what
+    separates Inline Stage from Move Stage: work absorbed by another stage of
+    the same file stays inside it, whereas work that left the file comes back
+    through a reference to a published image.
+    """
+    identities = {stage.identity for stage in stages}
+    return reference.lower() in identities
 
 
 def _stage_reference_of(entry) -> Optional[str]:
@@ -278,7 +504,12 @@ def _cache_inversions(instructions: list) -> int:
     )
 # mkdir only prepares the directory the move lands in; COPY creates it on its
 # own, so a RUN combining mkdir with mv is still solely a relocation.
-_MOVE_COMPANION_COMMANDS = {"mkdir"}
+# Commands that only serve the relocation and disappear along with it, so a
+# RUN carrying them is still an instruction whose sole purpose is the move:
+#   mkdir  prepares the directory the move lands in; COPY creates it by itself
+#   chmod  sets the mode the surviving transfer expresses with --chmod
+# A `set -...` line is shell scaffolding and is skipped before this check.
+_MOVE_COMPANION_COMMANDS = {"mkdir", "chmod"}
 
 
 def _transfer_operands(value: str):
@@ -293,6 +524,58 @@ def _transfer_operands(value: str):
     return tuple(tokens[:-1]), tokens[-1]
 
 
+def _transfer_key(value: str):
+    """Flags, sources and destination of a COPY or ADD, normalised.
+
+    What identifies a transfer is what it moves and where to, not how the line
+    is laid out. Flags are ordered so their sequence cannot matter, and the
+    operands come from ``_transfer_operands``, which already splits on
+    whitespace — so a line broken across backslash continuations, whose value
+    keeps the indentation of the physical lines, reduces to the same key as the
+    single-line form.
+
+    Returns None for a malformed transfer, which then matches nothing.
+    """
+    operands = _transfer_operands(value)
+    if operands is None:
+        return None
+    flags = tuple(sorted(token for token in value.split() if token.startswith("--")))
+    sources, destination = operands
+    return flags, tuple(sources), destination
+
+
+def _path(value: str) -> str:
+    """A filesystem path reduced to what it names.
+
+    ``/tmp/assets`` and ``/tmp/assets/`` are the same directory to Docker,
+    and a commit is free to write either. Comparing them as text makes two
+    references to one location look like two locations.
+    """
+    return value.rstrip("/") or "/"
+
+def _instruction_key(entry) -> tuple:
+    """An instruction reduced to what identifies it, ignoring its layout.
+
+    Used where a rule has to recognise the same instruction in both states
+    without demanding the same text. A transfer is keyed on its flags, sources
+    and destination, with any trailing separator dropped so ``fixtures`` and
+    ``fixtures/`` name the same path; every other instruction is keyed on its
+    keyword and its whitespace-normalised argument string, which is what makes
+    a line broken across continuations equal to the single-line form.
+    """
+    if entry.instruction in _FILE_TRANSFER_INSTRUCTIONS:
+        key = _transfer_key(entry.value)
+        if key is not None:
+            flags, sources, destination = key
+            return (
+                entry.instruction,
+                flags,
+                tuple(source.rstrip("/") for source in sources),
+                destination.rstrip("/"),
+            )
+    return (entry.instruction, " ".join(entry.value.split()))
+
+
 def _move_relocations(value: str):
     """(source, destination) of every mv in a RUN body, or None.
 
@@ -300,19 +583,74 @@ def _move_relocations(value: str):
     only instructions whose sole purpose is the move are considered.
     """
     relocations = []
+    removals = []
     for segment in _shell_segments(value):
         tokens = segment.split()
         if not tokens:
             continue
+        if _SHELL_DIRECTIVE.match(segment):
+            continue  # `set -eux` expresses fail-fast, not work
         command = tokens[0]
         if command == "mv":
             operands = [token for token in tokens[1:] if not token.startswith("-")]
             if len(operands) != 2:
                 return None  # multi-source move: not a single relocation
             relocations.append((operands[0], operands[1]))
+        elif command == "rm":
+            # Deferred: a removal is tolerable only when it clears the staging
+            # location the move read from, which the relocations below decide.
+            removals.extend(
+                token for token in tokens[1:] if not token.startswith("-")
+            )
         elif command not in _MOVE_COMPANION_COMMANDS:
             return None  # the RUN does more than move files
-    return relocations or None
+    if not relocations:
+        return None
+
+    # A `rm` is part of the relocation only when it clears a staging path the
+    # move emptied. Removing anything else is work of its own, and a RUN that
+    # does work beyond relocating is not what this refactoring eliminates.
+    staged = set()
+    for source, _destination in relocations:
+        staged.add(source.rstrip("/"))
+        parent = source.rstrip("/").rsplit("/", 1)[0]
+        if parent:
+            staged.add(parent)
+    for removed in removals:
+        if removed.rstrip("/") not in staged:
+            return None
+
+    return relocations
+
+
+def _absorption_key(entry) -> tuple:
+    """What identifies an instruction that survived being moved between stages.
+
+    Collapsing a stage into the one that consumed it removes the intermediate
+    location the work used to pass through, so the instructions arrive with
+    their operands adjusted: a file staged at ``/tmp/x`` is written straight to
+    ``/etc/x``. Matching on the full text would miss every such case, so the
+    key keeps what the instruction *does* and drops what the collapse is
+    expected to change.
+
+    A transfer is keyed on its sources — the destination is precisely what
+    moves. A RUN is keyed on the leading command of each of its segments, so
+    ``sed -i "..." /tmp/x`` still matches ``sed -i "..." /etc/x``. Anything
+    else is keyed on its keyword and normalised text, as before.
+    """
+    if entry.instruction in _FILE_TRANSFER_INSTRUCTIONS:
+        operands = _transfer_operands(entry.value)
+        if operands is not None:
+            sources, _destination = operands
+            return (entry.instruction, tuple(s.rstrip("/") for s in sources))
+    if entry.instruction == "RUN":
+        commands = tuple(
+            segment.split()[0]
+            for segment in _shell_segments(entry.value)
+            if segment.split() and not _SHELL_DIRECTIVE.match(segment)
+        )
+        return (entry.instruction, commands)
+    return (entry.instruction, " ".join(entry.value.split()))
 
 
 def _values_of(instructions: list, keyword: str) -> list:
@@ -398,6 +736,24 @@ def _invokes_script(value: str, path: str) -> bool:
     return False
 
 
+_SCRIPT_INVOCATION = re.compile(r"([\w./~$-]+\.(?:sh|bash))")
+
+
+def _invoked_scripts(value: str) -> set:
+    """Paths of the shell scripts a RUN body executes.
+
+    Built on the same positional test ``_invokes_script`` applies: a script
+    counts as executed only where a command stands, either as a segment's own
+    command or as the file handed to an interpreter. A path merely passed to
+    another command prepares the script without running it.
+    """
+    found = set()
+    for candidate in _SCRIPT_INVOCATION.findall(value):
+        if _invokes_script(value, candidate):
+            found.add(candidate)
+    return found
+
+
 _URL_PREFIXES = ("http://", "https://", "ftp://")
 _ARCHIVE_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz")
 
@@ -419,6 +775,165 @@ def _uses_add_only_capability(value: str) -> bool:
         if cleaned.startswith(_URL_PREFIXES) or cleaned.endswith(_ARCHIVE_SUFFIXES):
             return True
     return False
+
+
+# --- Build-argument resolution and image reference canonicalisation -----------
+
+_VARIABLE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _global_args(instructions: list) -> dict:
+    """Default values of the ARGs a FROM instruction may read.
+
+    Docker resolves variables in a FROM against the ARGs declared before the
+    first FROM; an ARG inside a stage is not visible there. Only those are
+    collected, so the expansion mirrors what the daemon would do.
+    """
+    values = {}
+    for entry in instructions:
+        if entry.instruction == "FROM":
+            break
+        if entry.instruction == "ARG" and "=" in entry.value:
+            name, _, default = entry.value.partition("=")
+            values[name.strip()] = default.strip()
+    return values
+
+
+def _expand_variables(value: str, variables: dict) -> str:
+    """Substitute ``${NAME}``, ``${NAME:-fallback}`` and ``$NAME`` in a value.
+
+    A name with no known value is left as written: an unresolvable reference is
+    not evidence of anything, and substituting an empty string would invent a
+    difference between two states that both fail to resolve it.
+    """
+    def replace(match):
+        braced, fallback, bare = match.group(1), match.group(2), match.group(3)
+        name = braced or bare
+        if name in variables:
+            return variables[name]
+        if fallback is not None:
+            return fallback
+        return match.group(0)
+
+    return _VARIABLE.sub(replace, value)
+
+
+# Prefixes Docker itself adds when it resolves a bare image name. A reference
+# that only gains or loses them still names the same image.
+_DEFAULT_REGISTRIES = ("index.docker.io/", "docker.io/")
+_DEFAULT_NAMESPACE = "library/"
+
+
+def _canonical_image_name(name: str) -> str:
+    """The image name with the implicit registry and namespace removed.
+
+    ``docker.io/library/python`` and ``python`` are the same image, so a change
+    between them is a notation change and not a base-image substitution. Only
+    the registry Docker assumes by default is stripped: a move to a genuinely
+    different registry keeps its host and stays visible as a difference.
+    """
+    canonical = name
+    for registry in _DEFAULT_REGISTRIES:
+        if canonical.startswith(registry):
+            canonical = canonical[len(registry) :]
+            if canonical.startswith(_DEFAULT_NAMESPACE):
+                canonical = canonical[len(_DEFAULT_NAMESPACE) :]
+            break
+    return canonical
+
+
+def _resolved_from_parts(instructions: list) -> list:
+    """The FROM instructions with their variables expanded and names canonical.
+
+    Returns one ``(instruction, parts)`` pair per FROM, in stage order, so the
+    FROM rules compare what Docker would actually build rather than the text as
+    written.
+    """
+    variables = _global_args(instructions)
+    resolved = []
+    for entry in _from_instructions(instructions):
+        parts = _parse_from_value(_expand_variables(entry.value, variables))
+        resolved.append((entry, parts._replace(name=_canonical_image_name(parts.name))))
+    return resolved
+
+
+def _stage_identities_before(resolved: list, position: int) -> set:
+    """Names an earlier stage can be referenced by, at a given FROM position.
+
+    A FROM may build on a previous stage instead of an image
+    (``FROM builder AS vet``). Such a reference is not an image at all, so the
+    rules that compare base images must leave it alone.
+    """
+    identities = set()
+    for index, (_entry, parts) in enumerate(resolved[:position]):
+        identities.add(str(index))
+        if parts.alias:
+            identities.add(parts.alias.lower())
+    return identities
+
+
+def _pair_from_instructions(resolved_a: list, resolved_b: list) -> list:
+    """Match the FROM instructions of two states to each other.
+
+    Positional alignment breaks as soon as a commit also adds or removes a
+    stage: the FROMs after the change sit at different indices, and a rule that
+    demands equal counts falls silent on every mixed commit. Matching by
+    identity instead lets the FROM rules keep working on exactly the stages
+    that survived.
+
+    A FROM matches its counterpart when they share an alias, or failing that
+    when they name the same canonical image — the second is what pairs a stage
+    whose alias is precisely what changed. Candidates are consumed greedily and
+    in order, so each FROM of the earlier state answers for at most one of the
+    later state; a FROM with no counterpart is skipped rather than silencing
+    the rule.
+
+    Returns ``(entry_before, parts_before, entry_after, parts_after, position)``
+    per matched pair, where the position is the index in the later state, used
+    to tell a stage reference from an image.
+    """
+    available = list(enumerate(resolved_a))
+    matched = []
+    # The final stage is the one that produces the image in both states, so it
+    # is paired before any other. Left to its turn it would find its
+    # counterpart already claimed by a name match from an earlier stage, and a
+    # base-image substitution on the stage that actually ships would be lost.
+    order = [len(resolved_b) - 1] + list(range(len(resolved_b) - 1))
+    for position in order:
+        after, parts_after = resolved_b[position]
+        chosen = None
+        for candidate in (
+            # Both the alias and the image agreeing is the strongest evidence
+            # that two FROMs are the same stage, and trying it first stops a
+            # bare name match from claiming a FROM that a differently-named
+            # stage at the same position needs.
+            lambda pair: (pair[1][1].alias == parts_after.alias
+                          and pair[1][1].name == parts_after.name),
+            lambda pair: pair[1][1].alias and pair[1][1].alias == parts_after.alias,
+            lambda pair: pair[1][1].name == parts_after.name,
+            # Neither the alias nor the name survives when the base image is
+            # substituted outright, which is exactly what R10 detects, so
+            # position is the last thing left to match on — counted from the
+            # end, because the final stage is the one that produces the image
+            # in both states. Counting from the start would pair the old base
+            # with whatever new stage was prepended, reporting a substitution
+            # that never happened.
+            lambda pair: (len(resolved_a) - 1 - pair[0]
+                          == len(resolved_b) - 1 - position),
+        ):
+            found = next((pair for pair in available if candidate(pair)), None)
+            if found is not None:
+                chosen = found
+                break
+        if chosen is None:
+            continue
+        available.remove(chosen)
+        _index, (before, parts_before) = chosen
+        matched.append((position, before, parts_before, after, parts_after))
+    # Restored to the order the stages appear in, so a rule reports its
+    # findings in the order a reader meets them in the file.
+    matched.sort(key=lambda item: item[0])
+    return [(b, pb, a, pa, pos) for pos, b, pb, a, pa in matched]
 
 
 # --- Detection rules ---------------------------------------------------------
@@ -462,14 +977,23 @@ def detect_inline_run_instructions(
         for segment in _shell_segments(value):
             segment_origin.setdefault(segment, set()).add(index)
 
-    # A surviving RUN is a merge when its commands come from >= 2 previous RUNs.
+    # A surviving RUN is a merge when no single previous RUN could account for
+    # everything it carries, and what it carries traces back to two or more of
+    # them. The first condition is what stops a segment that merely appears in
+    # several RUNs — `apt-get update` is in almost every Dockerfile twice —
+    # from making an untouched instruction look like a consolidation.
+    before_segments = [set(_shell_segments(value)) for value in runs_a]
     merged_after = []
     merged_origins = set()
     for value in runs_b:
+        segments = set(_shell_segments(value))
         origins = set()
-        for segment in _shell_segments(value):
+        for segment in segments:
             origins |= segment_origin.get(segment, set())
-        if len(origins) >= 2:
+        explained_by_one = any(
+            segments <= candidate for candidate in before_segments
+        )
+        if len(origins) >= 2 and not explained_by_one:
             merged_after.append(Instruction("RUN", value))
             merged_origins |= origins
 
@@ -517,23 +1041,33 @@ def detect_update_base_image_tag(
     FROMs, stage alignment is ambiguous (Extract/Inline Stage territory) and
     the rule stays silent rather than guessing.
     """
-    froms_a = _from_instructions(instructions_a)
-    froms_b = _from_instructions(instructions_b)
-    if not froms_a or len(froms_a) != len(froms_b):
+    resolved_a = _resolved_from_parts(instructions_a)
+    resolved_b = _resolved_from_parts(instructions_b)
+    if not resolved_a or not resolved_b:
         return None
 
     changed_before = []
     changed_after = []
-    for before, after in zip(froms_a, froms_b):
-        if before == after:
+    for before, parts_before, after, parts_after, position in _pair_from_instructions(
+        resolved_a, resolved_b
+    ):
+        # A FROM may build on an earlier stage rather than an image. That is a
+        # stage reference, not a base image, and no image rule applies to it.
+        stages_before = _stage_identities_before(resolved_a, position)
+        stages_after = _stage_identities_before(resolved_b, position)
+        if (parts_before.name.lower() in stages_before
+                or parts_after.name.lower() in stages_after):
             continue
-        parts_before = _parse_from_value(before.value)
-        parts_after = _parse_from_value(after.value)
+
+        # The image entity, and only the image entity: whether the stage was
+        # also renamed in the same commit is R14's finding, not this rule's.
+        # Each FROM rule judges one dimension — this one the tag, R10 the
+        # entity, R14 the alias — so a commit that changes two of them at once
+        # reports both rather than neither.
         entity_preserved = (
             parts_before.name == parts_after.name
             and parts_before.digest == parts_after.digest
             and parts_before.flags == parts_after.flags
-            and parts_before.alias == parts_after.alias
         )
         directional_tag_update = (
             parts_before.tag != parts_after.tag and parts_after.tag != "latest"
@@ -577,27 +1111,50 @@ def detect_replace_add_with_copy(
     keyword would change the build result — not a refactoring, ignored.
     """
     adds_a = _values_of(instructions_a, "ADD")
-    adds_b = Counter(_values_of(instructions_b, "ADD"))
-    copies_a = Counter(_values_of(instructions_a, "COPY"))
-    copies_b = Counter(_values_of(instructions_b, "COPY"))
 
-    # For each argument string, the number of replacements is bounded both
-    # by the ADDs that disappeared and by the COPYs that appeared.
+    # Keyed on what each transfer moves and where to, rather than on its
+    # argument string. The refactoring swaps the keyword and may reformat the
+    # line in the same edit — breaking it across continuations, for instance —
+    # and a byte comparison would miss every such case.
+    def keyed(values):
+        counted = Counter()
+        for value in values:
+            key = _transfer_key(value)
+            if key is not None:
+                counted[key] += 1
+        return counted
+
+    adds_a_keys = [(_transfer_key(v), v) for v in adds_a]
+    adds_b_counts = keyed(_values_of(instructions_b, "ADD"))
+    copies_a_counts = keyed(_values_of(instructions_a, "COPY"))
+    copies_b_values = _values_of(instructions_b, "COPY")
+    copies_b_counts = keyed(copies_b_values)
+
+    # For each transfer, the number of replacements is bounded both by the ADDs
+    # that disappeared and by the COPYs that appeared.
     replacement_budget = {}
-    for value in set(adds_a):
+    for key, value in adds_a_keys:
+        if key is None or key in replacement_budget:
+            continue
         if _uses_add_only_capability(value):
             continue
-        removed_adds = adds_a.count(value) - adds_b[value]
-        gained_copies = copies_b[value] - copies_a[value]
-        replacement_budget[value] = min(removed_adds, gained_copies)
+        removed_adds = sum(1 for k, _ in adds_a_keys if k == key) - adds_b_counts[key]
+        gained_copies = copies_b_counts[key] - copies_a_counts[key]
+        replacement_budget[key] = min(removed_adds, gained_copies)
+
+    # The surviving COPY is reported as written, so the report shows the text
+    # the commit actually produced rather than a reconstruction of it.
+    copy_by_key = {}
+    for value in copies_b_values:
+        copy_by_key.setdefault(_transfer_key(value), value)
 
     changed_before = []
     changed_after = []
-    for value in adds_a:  # original order of the ADDs in version A
-        if replacement_budget.get(value, 0) > 0:
-            replacement_budget[value] -= 1
+    for key, value in adds_a_keys:  # original order of the ADDs in version A
+        if replacement_budget.get(key, 0) > 0:
+            replacement_budget[key] -= 1
             changed_before.append(Instruction("ADD", value))
-            changed_after.append(Instruction("COPY", value))
+            changed_after.append(Instruction("COPY", copy_by_key.get(key, value)))
 
     if not changed_before:
         return None
@@ -770,7 +1327,12 @@ def detect_inline_stage(
     if not stages_a or len(stages_a) <= len(stages_b):
         return None
 
-    body_after = Counter(entry for stage in stages_b for entry in stage.instructions)
+    # Matched by what each instruction does rather than by its exact text: the
+    # collapse removes the intermediate location the work passed through, so
+    # the absorbed instructions arrive with their operands adjusted.
+    body_after = Counter(
+        _absorption_key(entry) for stage in stages_b for entry in stage.instructions
+    )
     references_after = {
         reference
         for reference in (_stage_reference_of(e) for e in instructions_b)
@@ -786,7 +1348,10 @@ def detect_inline_stage(
             continue  # nothing consumed this stage: not the inlined one
         if stage.identity in references_after:
             continue  # still read from: the stage survives
-        absorbed = [entry for entry in stage.instructions if body_after[entry] > 0]
+        absorbed = [
+            entry for entry in stage.instructions
+            if body_after[_absorption_key(entry)] > 0
+        ]
         if not absorbed:
             continue  # its work vanished: a deletion, not an inlining
 
@@ -800,21 +1365,93 @@ def detect_inline_stage(
     return None
 
 
+def _sort_identity(entry: Instruction) -> tuple:
+    """An instruction reduced to what identifies it across a rearrangement.
+
+    A file transfer is identified by what it brings into the image and not
+    by where that lands. The destination is an operand other refactorings
+    legitimately rewrite — R12 absorbs a move into it, R08 swaps the keyword
+    around it — and R07 judges position, not operands. Keying on the
+    destination would make an instruction relocated and re-targeted in the
+    same commit unrecognisable in its new place, which is the one thing this
+    rule has to see. Every other instruction keeps the shared key.
+    """
+    if entry.instruction in _FILE_TRANSFER_INSTRUCTIONS:
+        key = _transfer_key(entry.value)
+        if key is not None:
+            _, sources, _ = key
+            return (
+                entry.instruction,
+                tuple(source.rstrip("/") for source in sources),
+            )
+    return _instruction_key(entry)
+
+
+def _paired_stages(instructions_a: list, instructions_b: list) -> list:
+    """Match the stages of the two states, by alias and then by position.
+
+    Position is counted from the end, for the same reason the FROM rules
+    count it from there: the final stage produces the image in both states,
+    so it is the one anchor a commit adding or removing a stage leaves fixed.
+    """
+    stages_a, stages_b = _stages(instructions_a), _stages(instructions_b)
+    used, pairs = set(), []
+    for position, stage_b in enumerate(stages_b):
+        match = None
+        if stage_b.alias:
+            match = next(
+                (index for index, stage_a in enumerate(stages_a)
+                 if index not in used and stage_a.alias == stage_b.alias),
+                None,
+            )
+        if match is None:
+            from_end = len(stages_b) - 1 - position
+            match = next(
+                (index for index, stage_a in enumerate(stages_a)
+                 if index not in used
+                 and len(stages_a) - 1 - index == from_end
+                 and not stage_a.alias and not stage_b.alias),
+                None,
+            )
+        if match is not None:
+            used.add(match)
+            pairs.append((stages_a[match], stage_b))
+    return pairs
+
+
+def _instructions_common_to(body: list, keys: list, common: Counter) -> list:
+    """The instructions of one body that the other body also holds."""
+    budget = Counter(common)
+    kept = []
+    for entry, key in zip(body, keys):
+        if budget[key] > 0:
+            budget[key] -= 1
+            kept.append(entry)
+    return kept
+
+
 @rule
 def detect_sort_instructions(
     instructions_a: list, instructions_b: list
 ) -> Optional[DetectionResult]:
     """R07 — Sort Instructions.
 
-    Directional rule over the instruction order: the same instructions appear
-    in both states, rearranged so that stable, resource-intensive steps come
-    before frequently modified ones, which is what preserves cache validity
-    across rebuilds.
+    Directional rule over the instruction order: instructions are rearranged
+    so that stable, resource-intensive steps come before frequently modified
+    ones, which is what preserves cache validity across rebuilds.
 
-    Two conditions establish that the change is a pure rearrangement: the
-    multiset of instructions is identical, so nothing was added, removed or
-    edited, and the sequence differs. A commit that also edits an instruction
-    is not a rearrangement and is not reported here.
+    Judged one stage at a time. Cache invalidation is a property of a single
+    layer chain — a FROM starts a new one — so an instruction standing before
+    another in a different stage costs nothing, and comparing the file as one
+    sequence reads a stage being inlined as though its instructions had been
+    sorted. Stages are matched by alias, then by position from the end.
+
+    Within a stage the rule reads only the instructions both states hold,
+    per the granularity law. Demanding that the whole stage be a permutation
+    made the rule silent on any commit that also added or removed an
+    instruction, which is most real commits: a rearrangement accompanied by
+    an extraction is still a rearrangement, and the extraction is the other
+    rule's finding. Instructions present in only one state are left to it.
 
     Direction is decided by counting cache inversions — volatile file
     transfers standing before dependency installations. The rearrangement
@@ -822,30 +1459,43 @@ def detect_sort_instructions(
     package installation invalidates the expensive layer on every source
     change and is technical debt rather than a refactoring.
     """
-    if Counter(instructions_a) != Counter(instructions_b):
-        return None  # something was added, removed or edited: not a reordering
-    if instructions_a == instructions_b:
-        return None  # same order: nothing was rearranged
+    moved_before, moved_after = [], []
+    for stage_a, stage_b in _paired_stages(instructions_a, instructions_b):
+        body_a, body_b = list(stage_a.instructions), list(stage_b.instructions)
+        common = Counter(_sort_identity(e) for e in body_a) & Counter(
+            _sort_identity(e) for e in body_b
+        )
+        kept_a = _instructions_common_to(
+            body_a, [_sort_identity(e) for e in body_a], common
+        )
+        kept_b = _instructions_common_to(
+            body_b, [_sort_identity(e) for e in body_b], common
+        )
+        keys_a = [_sort_identity(entry) for entry in kept_a]
+        keys_b = [_sort_identity(entry) for entry in kept_b]
+        if not kept_a or keys_a == keys_b:
+            continue  # nothing the two states share was rearranged
+        if _cache_inversions(kept_b) >= _cache_inversions(kept_a):
+            continue  # the rearrangement does not improve cache ordering
 
-    if _cache_inversions(instructions_b) >= _cache_inversions(instructions_a):
-        return None  # the rearrangement does not improve cache ordering
+        moved_before.extend(
+            entry for entry, before, after in zip(kept_a, keys_a, keys_b)
+            if before != after
+        )
+        moved_after.extend(
+            entry for entry, before, after in zip(kept_b, keys_a, keys_b)
+            if before != after
+        )
 
-    moved_before = tuple(
-        entry for index, entry in enumerate(instructions_a)
-        if instructions_b[index] != entry
-    )
-    moved_after = tuple(
-        entry for index, entry in enumerate(instructions_b)
-        if instructions_a[index] != entry
-    )
+    if not moved_before:
+        return None
 
     return DetectionResult(
         refactoring_id="R07",
         refactoring_name="Sort Instructions",
-        instructions_before=moved_before,
-        instructions_after=moved_after,
+        instructions_before=tuple(moved_before),
+        instructions_after=tuple(moved_after),
     )
-
 
 @rule
 def detect_extract_run_instructions(
@@ -877,18 +1527,12 @@ def detect_extract_run_instructions(
     the reverse path — the script COPY disappears rather than appears — and is
     never reported.
     """
-    # Scripts the image already received, by file name: a script whose
-    # destination merely changed is not a newly extracted one.
-    scripts_before = {
-        path.rsplit("/", 1)[-1]
-        for entry in instructions_a
-        if entry.instruction in _FILE_TRANSFER_INSTRUCTIONS
-        for path in _script_destinations(entry)
-    }
     runs_a = _values_of(instructions_a, "RUN")
     runs_b = _values_of(instructions_b, "RUN")
 
-    # Directional: extraction removes shell work from the Dockerfile.
+    # Directional: extraction removes shell work from the Dockerfile. This is
+    # what separates the refactoring from adding new functionality through a
+    # script, and it carries the whole weight of the direction.
     segments_a = sum(len(_shell_segments(value)) for value in runs_a)
     segments_b = sum(len(_shell_segments(value)) for value in runs_b)
     if segments_b >= segments_a:
@@ -901,26 +1545,38 @@ def detect_extract_run_instructions(
     if not extracted:
         return None  # nothing changed in the RUN bodies: no work to extract
 
-    for entry in instructions_b:
-        if entry.instruction not in _FILE_TRANSFER_INSTRUCTIONS:
-            continue
-        for path in _script_destinations(entry):
-            if path.rsplit("/", 1)[-1] in scripts_before:
-                continue  # the script was already in the image: nothing arrived now
-            callers = [
-                Instruction("RUN", value)
-                for value in runs_b
-                if _invokes_script(value, path)
-            ]
-            if not callers:
-                continue  # the script is copied in but never executed
+    # Scripts already invoked before the change. The invocation has to be new:
+    # a RUN that merely loses commands while continuing to call a script it
+    # already called is a deletion, not an extraction.
+    invoked_before = set()
+    for value in runs_a:
+        invoked_before |= _invoked_scripts(value)
 
-            return DetectionResult(
-                refactoring_id="R09",
-                refactoring_name="Extract RUN Instructions",
-                instructions_before=tuple(extracted),
-                instructions_after=(entry,) + tuple(callers),
-            )
+    # Transfers that bring a script in, so the report can name how the script
+    # reached the image when the same commit also copies it. Its absence is not
+    # disqualifying: the script may have arrived in an earlier commit, or ride
+    # in with a directory the build context already carries.
+    arrivals = {}
+    for entry in instructions_b:
+        if entry.instruction in _FILE_TRANSFER_INSTRUCTIONS:
+            for path in _script_destinations(entry):
+                arrivals.setdefault(path.rsplit("/", 1)[-1], entry)
+
+    for value in runs_b:
+        newly_invoked = _invoked_scripts(value) - invoked_before
+        if not newly_invoked:
+            continue
+        script = sorted(newly_invoked)[0]
+        caller = Instruction("RUN", value)
+        arrival = arrivals.get(script.rsplit("/", 1)[-1])
+        reported_after = (arrival, caller) if arrival is not None else (caller,)
+
+        return DetectionResult(
+            refactoring_id="R09",
+            refactoring_name="Extract RUN Instructions",
+            instructions_before=tuple(extracted),
+            instructions_after=reported_after,
+        )
 
     return None
 
@@ -949,22 +1605,34 @@ def detect_update_base_image(
     alignment is ambiguous (Extract/Inline Stage territory) and the rule
     stays silent.
     """
-    froms_a = _from_instructions(instructions_a)
-    froms_b = _from_instructions(instructions_b)
-    if not froms_a or len(froms_a) != len(froms_b):
+    resolved_a = _resolved_from_parts(instructions_a)
+    resolved_b = _resolved_from_parts(instructions_b)
+    if not resolved_a or not resolved_b:
         return None
 
     changed_before = []
     changed_after = []
-    for before, after in zip(froms_a, froms_b):
-        if before == after:
+    for before, parts_before, after, parts_after, position in _pair_from_instructions(
+        resolved_a, resolved_b
+    ):
+        # A FROM naming an earlier stage is a stage reference, not an image;
+        # renaming the stage it points at is R14's business, not a base-image
+        # substitution.
+        stages_before = _stage_identities_before(resolved_a, position)
+        stages_after = _stage_identities_before(resolved_b, position)
+        if (parts_before.name.lower() in stages_before
+                or parts_after.name.lower() in stages_after):
             continue
-        parts_before = _parse_from_value(before.value)
-        parts_after = _parse_from_value(after.value)
+
+        # Names are compared canonically, so a reference that only gains or
+        # loses the registry and namespace Docker assumes by default — plain
+        # `python` against `docker.io/library/python` — is the same image and
+        # not a substitution.
+        # The entity, and only the entity: a stage renamed in the same commit
+        # is R14's finding and must not hide the base-image substitution.
         entity_substitution = (
             parts_before.name != parts_after.name
             and parts_before.flags == parts_after.flags
-            and parts_before.alias == parts_after.alias
         )
         if entity_substitution:
             changed_before.append(before)
@@ -1040,6 +1708,53 @@ def detect_move_stage(
             instructions_after=(froms_b[moved.index],),
         )
 
+    # Form B: the stage is gone from the file altogether and the transfers that
+    # read from it now name a published image instead. The work left in the
+    # same sense as form A — into a Dockerfile of its own, built separately —
+    # but the reference that used to point at a local stage was rewritten
+    # rather than the stage being kept and emptied.
+    identities_b = {stage.identity for stage in stages_b}
+    for stage in stages_a:
+        if not stage.instructions:
+            continue  # no body to move out
+        if stage.identity in identities_b:
+            continue  # the stage survives: form A territory, handled above
+
+        consumers = [
+            entry for entry in instructions_a
+            if _stage_reference_of(entry) == stage.identity
+        ]
+        if not consumers:
+            continue  # nothing read from it: a plain deletion
+
+        # Sources the stage used to deliver, and who delivers them now.
+        delivered = set()
+        for entry in consumers:
+            operands = _transfer_operands(entry.value)
+            if operands is not None:
+                delivered |= {source.rstrip("/") for source in operands[0]}
+
+        replacements = []
+        for entry in instructions_b:
+            reference = _stage_reference_of(entry)
+            if reference is None or _names_a_stage(reference, stages_b):
+                continue  # still a stage of this file: the work did not leave
+            operands = _transfer_operands(entry.value)
+            if operands is None:
+                continue
+            if {source.rstrip("/") for source in operands[0]} & delivered:
+                replacements.append(entry)
+
+        if not replacements:
+            continue  # nothing external delivers what the stage used to
+
+        return DetectionResult(
+            refactoring_id="R11",
+            refactoring_name="Move Stage",
+            instructions_before=stage.instructions,
+            instructions_after=tuple(replacements),
+        )
+
     return None
 
 
@@ -1065,6 +1780,10 @@ def detect_remove_run_mv(
     3. in the after state a COPY or ADD carrying the same sources lands
        directly on the path the move wrote to.
 
+    Paths are compared as paths and not as text: a transfer writes to
+    ``/tmp/assets/`` while the move it feeds reads ``/tmp/assets``, and the
+    trailing separator names no different directory.
+
     Adding a ``RUN mv`` is the reverse path and is never reported.
     """
     surviving_runs = set(_values_of(instructions_b, "RUN"))
@@ -1083,18 +1802,21 @@ def detect_remove_run_mv(
             # the transfer that used to land on the path the move read from
             origin = next(
                 (e for e in transfers_a
-                 if (ops := _transfer_operands(e.value)) and ops[1] == source),
+                 if (ops := _transfer_operands(e.value))
+                 and _path(ops[1]) == _path(source)),
                 None,
             )
             if origin is None:
                 continue
-            origin_sources = _transfer_operands(origin.value)[0]
+            origin_sources = tuple(
+                _path(s) for s in _transfer_operands(origin.value)[0]
+            )
             # the same sources now landing straight on the move's destination
             landed = next(
                 (e for e in transfers_b
                  if (ops := _transfer_operands(e.value))
-                 and ops[1] == destination
-                 and ops[0] == origin_sources),
+                 and _path(ops[1]) == _path(destination)
+                 and tuple(_path(s) for s in ops[0]) == origin_sources),
                 None,
             )
             if landed is None:
@@ -1115,41 +1837,175 @@ def detect_remove_run_mv(
     )
 
 
+def _layout_skeleton(entry: Instruction) -> tuple:
+    """What an instruction does, with how it is written stripped away.
+
+    For a RUN this is the ordered sequence of leading commands, one per
+    segment. The operands are deliberately left out: a reflow that also
+    parameterises an argument is still a reflow, and the parameterisation is
+    another rule's finding, reported alongside under the non-exclusion
+    principle. Any other keyword falls back to its arguments, so that a
+    caller outside R13 gets a defined answer rather than an empty one.
+
+    The sequence is ordered because moving a command is not reformatting. An
+    unordered comparison accepts a command relocated to another point in the
+    chain, which changes the order the work happens in.
+    """
+    if entry.instruction != "RUN":
+        return tuple(entry.value.split())
+    return tuple(
+        segment.split()[0]
+        for segment in _shell_segments(entry.value)
+        if segment.split() and not _SHELL_DIRECTIVE.match(segment)
+    )
+
+
+def _work_survived_reflow(used: list, after: Instruction) -> bool:
+    """Whether the same work crossed the reflow, allowing parameterisation.
+
+    The command skeleton alone does not settle it: it names the commands and
+    not what they operate on, so an instruction that gained a package while
+    being split across lines would satisfy it. The words decide.
+
+    Identical words are a pure reflow, whether one instruction was rewritten
+    or several were consolidated into one. Otherwise the difference has to
+    be a substitution and not an edit: words must have left as well as
+    arrived, which rules out an argument simply added or simply dropped, and
+    at least one of the arriving words must be a variable reference, which
+    is what a parameterisation looks like. Swapping one literal for another
+    satisfies neither and is a content edit.
+    """
+    source_words = Counter()
+    for entry in used:
+        source_words += _run_commands(entry.value)
+    after_words = _run_commands(after.value)
+    if after_words == source_words:
+        return True
+
+    departed = source_words - after_words
+    arrived = after_words - source_words
+    if not departed or not arrived:
+        return False  # an argument was added, or removed: a content edit
+    return any(_VARIABLE_REFERENCE.search(word) for word in arrived)
+
+
+def _reflowed_from(available: list, after: Instruction) -> list:
+    """Consecutive instructions reflowed into ``after``, or nothing.
+
+    One instruction may be reflowed on its own, or several may be reflowed
+    into one; consolidating and reformatting in the same commit is ordinary,
+    and each is a separate finding on the same instruction. Candidates are
+    taken consecutively and in file order, because that is the order a
+    consolidation preserves.
+
+    At least one source must be written differently from the result: without
+    that the typography did not change and there is nothing to report.
+    """
+    target = _layout_skeleton(after)
+    if not target:
+        return []
+    for start in range(len(available)):
+        accumulated: tuple = ()
+        used = []
+        for candidate in available[start:]:
+            accumulated += _layout_skeleton(candidate)
+            used.append(candidate)
+            if len(accumulated) > len(target):
+                break
+            if accumulated != target:
+                continue
+            if any(entry.layout != after.layout for entry in used):
+                if _work_survived_reflow(used, after):
+                    return used
+            break
+    return []
+
 @rule
 def detect_update_run_instruction(
     instructions_a: list, instructions_b: list
 ) -> Optional[DetectionResult]:
-    """R13 — Update RUN Instruction.
+    """R13 - Update RUN Instruction.
 
-    Granular rule over the RUN subset, aligned by position: a RUN is reported
-    when its text changed while the commands and arguments it carries stayed
-    exactly the same. That is what this refactoring does — split a long
-    instruction across lines with backslashes, and sort its arguments
-    alphanumerically — so the package set and the versions are identical on
-    both sides and only the physical layout or the order differs.
+    The refactoring changes how an instruction is written, not what it does:
+    split a long instruction across backslash continuations, or sort its
+    arguments alphanumerically. The rule recognises two forms of that, and a
+    commit exhibiting either is reported.
 
-    The comparison is a multiset of whitespace-separated tokens. It matches
-    both components of the refactoring: reordering keeps the same tokens in a
-    different sequence, and line splitting keeps the same tokens with
-    different spacing, since continuations resolve into the argument string.
-    Adding, removing or re-versioning a package changes the token multiset, so
-    such a change is a content edit and is never reported here.
+    *The words are the same and the text is not.* Reordering arguments and
+    respacing them leave the multiset of words untouched, so a RUN whose words
+    match one that disappeared is the same RUN, rewritten. Adding, removing or
+    re-versioning a package changes the multiset and is a content edit, never
+    reported here. This form needs no change of typography, since sorting a
+    package list on one line changes none.
 
-    When the number of RUN instructions differs the change belongs to
-    consolidation or removal (R01, R12) and the rule stays silent.
+    *The typography changed and the commands survived it.* The class an
+    instruction is written in - one line, continuations, heredoc - is recorded
+    at parse time, and a change of class is the positive evidence that a
+    reflow happened. What must then be shown is that the same work crossed it,
+    which ``_layout_skeleton`` states as the ordered sequence of commands.
+    Several RUNs reflowed into one are covered, since consolidating and
+    reformatting in the same commit is ordinary and each is its own finding.
+
+    Both forms read RUN and nothing else. Other keywords are written across
+    continuations too - a LABEL carrying five annotations, an ENV carrying
+    ten - but the catalogue defines this refactoring over RUN instructions,
+    and a rule that reported a reflowed LABEL would be reporting a
+    refactoring the catalogue does not contain.
+
+    The second form tolerates operand differences that the first rejects, and
+    that is deliberate: a commit that reflows a RUN while replacing a literal
+    with a variable has reformatted it, whatever else it also did. The
+    tolerance is bounded by the requirement that the typography changed, so an
+    operand edit on its own is never mistaken for a reflow. It remains the
+    looser of the two: a single-command RUN that is reflowed and re-argued at
+    once is reported, and the evidence carries both texts so the reader sees
+    what else moved.
     """
+    changed_before, changed_after = [], []
+
+    # --- Same words, different text.
     runs_a = _values_of(instructions_a, "RUN")
     runs_b = _values_of(instructions_b, "RUN")
-    if not runs_a or len(runs_a) != len(runs_b):
-        return None
-
-    changed_before, changed_after = [], []
-    for before, after in zip(runs_a, runs_b):
-        if before == after:
+    surviving = set(runs_b)
+    available = [value for value in runs_a if value not in surviving]
+    for after in runs_b:
+        if after in runs_a:
+            continue  # unchanged text: nothing was rewritten here
+        commands_after = _run_commands(after)
+        match = next(
+            (value for value in available if _run_commands(value) == commands_after),
+            None,
+        )
+        if match is None:
             continue
-        if Counter(before.split()) == Counter(after.split()):
-            changed_before.append(Instruction("RUN", before))
-            changed_after.append(Instruction("RUN", after))
+        available.remove(match)
+        changed_before.append(Instruction("RUN", match))
+        changed_after.append(Instruction("RUN", after))
+
+    # --- Different typography, same commands.
+    identities_a = {(entry.instruction, entry.value) for entry in instructions_a}
+    identities_b = {(entry.instruction, entry.value) for entry in instructions_b}
+    already = {entry.value for entry in changed_after}
+    gone = [
+        entry
+        for entry in instructions_a
+        if entry.instruction == "RUN"
+        and ("RUN", entry.value) not in identities_b
+    ]
+    for after in instructions_b:
+        if after.instruction != "RUN":
+            continue
+        if ("RUN", after.value) in identities_a:
+            continue  # the instruction is untouched
+        if after.value in already:
+            continue  # already reported by the first form
+        used = _reflowed_from(gone, after)
+        if not used:
+            continue
+        for entry in used:
+            gone.remove(entry)
+            changed_before.append(entry)
+        changed_after.append(after)
 
     if not changed_before:
         return None
@@ -1188,21 +2044,24 @@ def detect_rename_image(
     detection. When the number of FROMs differs, stage alignment is
     ambiguous (Extract/Inline Stage territory) and the rule stays silent.
     """
-    froms_a = _from_instructions(instructions_a)
-    froms_b = _from_instructions(instructions_b)
-    if not froms_a or len(froms_a) != len(froms_b):
+    resolved_a = _resolved_from_parts(instructions_a)
+    resolved_b = _resolved_from_parts(instructions_b)
+    if not resolved_a or not resolved_b:
         return None
 
     changed_before = []
     changed_after = []
-    for before, after in zip(froms_a, froms_b):
+    for before, parts_before, after, parts_after, _position in _pair_from_instructions(
+        resolved_a, resolved_b
+    ):
         if before == after:
             continue
-        parts_before = _parse_from_value(before.value)
-        parts_after = _parse_from_value(after.value)
+        # The image itself must be the same image, so a base substitution stays
+        # R10's finding. Its tag is free to change in the same commit: that is
+        # R02's dimension, and demanding it be untouched would silence this
+        # rule on every commit that pins a version while renaming a stage.
         image_untouched = (
             parts_before.name == parts_after.name
-            and parts_before.tag == parts_after.tag
             and parts_before.digest == parts_after.digest
             and parts_before.flags == parts_after.flags
         )

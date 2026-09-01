@@ -99,25 +99,70 @@ official containers and need no local installation.
 
 ## Test suite
 
+### What you need first
+
+The suite runs in full only where its two external dependencies are present.
+Both are optional: every test that needs one is guarded by a `skipif` and
+reports a skip rather than a failure when it is missing.
+
+**1. Python 3.12 or later, and the dependencies.**
+
 ```
 pip install -r requirements.txt
-python -m pytest
 ```
 
-299 tests are collected: 294 pass and 5 are skipped, and none fails. The five
-are the end-to-end ones, each guarded by a `skipif` — one needs a local clone
-of `docker/getting-started` named by the `GETTING_STARTED_REPO` environment
-variable, the other four need a reachable Docker daemon. They run and pass
-where those are available, so the skip reports the host and not a failure.
-The remaining 294 need neither Docker nor network access.
+**2. A reachable Docker daemon**, for the four end-to-end tests that build
+real images and run Hadolint and Trivy against them.
 
-Coverage figures are reproduced with:
+Run the suite **under WSL2 or Linux**, not from Windows. Where Docker Engine
+runs inside WSL2 it listens on a Unix socket inside that VM, which the Windows
+Python interpreter cannot reach: `docker.from_env()` finds neither `DOCKER_HOST`
+nor the Windows named pipe, and those four tests skip.
+
+**3. A local clone of `docker/getting-started`**, for the integration test that
+replicates Experiment 3 against a real public history. The test reads two
+specific commits, so the clone needs its history — `--depth` will not do.
 
 ```
-python -m pytest --cov=src --cov-report=term
+git clone https://github.com/docker/getting-started.git "$HOME/getting-started"
 ```
 
-which reports 94% over 1285 statements.
+> Clone it inside the WSL2 filesystem, not under `/mnt/c`. Git refuses to open
+> a repository owned by another user (`detected dubious ownership`), which is
+> what a Windows-side clone looks like to WSL2, and the test fails instead of
+> skipping.
+
+### Running
+
+```
+export GETTING_STARTED_REPO="$HOME/getting-started"
+pytest
+```
+
+299 tests are collected. With both dependencies present, **all 299 pass and
+none is skipped**. Without them the suite still runs and still fails nothing:
+
+| Environment | Result |
+|---|---|
+| WSL2, Docker running, clone present | 299 passed |
+| No `GETTING_STARTED_REPO` | 298 passed, 1 skipped |
+| No Docker daemon (e.g. run from Windows) | 295 passed, 4 skipped |
+| Neither | 294 passed, 5 skipped |
+
+The 294 that need nothing external cover the detection engine in full, which is
+pure Python: a reader wanting only to verify detection needs no Docker and no
+network.
+
+### Coverage
+
+```
+pytest --cov=src --cov-report=term
+```
+
+Measured with the complete suite, this reports **94% over 1285 statements**,
+72 uncovered. Measuring without Docker understates it: the end-to-end tests
+reach code paths the doubles cannot, and `data_extractor.py` alone falls from
+96% to 89%. Quote the figure together with the environment it was measured in.
 
 ## License
 

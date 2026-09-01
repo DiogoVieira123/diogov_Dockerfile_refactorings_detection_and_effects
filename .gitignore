@@ -12,4 +12,6 @@ mapping.json
 .coverage
 execution_artifacts/
 run_evaluation.py
-audit_results.py
+audit_corpus.py
+detection_accuracy.md
+mapping.md

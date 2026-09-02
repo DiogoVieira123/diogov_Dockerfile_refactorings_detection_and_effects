@@ -50,6 +50,24 @@ EXIT_EXTRACT = 5
 EXIT_REPORT = 6
 
 
+def _output_directory(value: str) -> str:
+    """Reject an empty --output instead of silently writing to the cwd.
+
+    An argparse default applies only when the option is absent, so passing
+    an empty string is not the same as omitting the option: it reaches the
+    program as `""`, which `Path` resolves to the current directory. The
+    tool would then scatter the report and the raw artifacts wherever it
+    happened to be run from, with nothing to say it had done so. An empty
+    value is almost always an unset shell variable, so it is refused here
+    rather than acted upon.
+    """
+    if not value.strip():
+        raise argparse.ArgumentTypeError(
+            "the output directory cannot be empty. Omit -o to use the default "
+            "./impact_report, or give a path."
+        )
+    return value
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="main.py",
@@ -66,7 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         default="./impact_report",
-        help="directory for the report artifacts (default: ./impact_report)",
+        type=_output_directory,
+        help=(
+            "directory for the report artifacts, created if absent "
+            "(default: ./impact_report, relative to the working directory)"
+        ),
     )
     parser.add_argument(
         "-d",

@@ -1,0 +1,22 @@
+{
+  "before": [
+    {
+      "code": "SC2035",
+      "column": 1,
+      "file": "-",
+      "level": "info",
+      "line": 15,
+      "message": "Use ./*glob* or -- *glob* so names with dashes won't become options."
+    }
+  ],
+  "after": [
+    {
+      "code": "SC2035",
+      "column": 1,
+      "file": "-",
+      "level": "info",
+      "line": 15,
+      "message": "Use ./*glob* or -- *glob* so names with dashes won't become options."
+    }
+  ]
+}

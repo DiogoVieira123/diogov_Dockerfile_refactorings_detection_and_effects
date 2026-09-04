@@ -1,0 +1,92 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:15:50 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/api/Dockerfile",
+    "commit_before": "4316c0896a7585c234f649a3de40288454e345d1",
+    "commit_after": "54b9d41288fbdf20395b6808a47c87731b7cb21c"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R01",
+      "refactoring_name": "Inline RUN Instructions",
+      "instructions_before": [
+        {
+          "instruction": "RUN",
+          "value": "[\"/bin/sh\", \"-c\", \"mkdir -p /var/lib/api/uploads /var/lib/api/tmp\"]"
+        },
+        {
+          "instruction": "RUN",
+          "value": "[\"/bin/sh\", \"-c\", \"node --version > /var/lib/api/node_version\"]"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "RUN",
+          "value": "[\"/bin/sh\", \"-c\", \"mkdir -p /var/lib/api/uploads /var/lib/api/tmp && node --version > /var/lib/api/node_version\"]"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 79435841,
+      "after": 79435327,
+      "delta_size": -514
+    },
+    "cves": {
+      "before": 228,
+      "after": 228,
+      "delta_cves": 0,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 7,
+          "HIGH": 52,
+          "MEDIUM": 89,
+          "LOW": 76,
+          "UNKNOWN": 4
+        },
+        "after": {
+          "CRITICAL": 7,
+          "HIGH": 52,
+          "MEDIUM": 89,
+          "LOW": 76,
+          "UNKNOWN": 4
+        },
+        "delta": {
+          "CRITICAL": 0,
+          "HIGH": 0,
+          "MEDIUM": 0,
+          "LOW": 0,
+          "UNKNOWN": 0
+        }
+      }
+    },
+    "warnings": {
+      "before": 2,
+      "after": 2,
+      "delta_warnings": 0
+    },
+    "logical_instructions": {
+      "before": 15,
+      "after": 14,
+      "delta_logical_instructions": -1
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

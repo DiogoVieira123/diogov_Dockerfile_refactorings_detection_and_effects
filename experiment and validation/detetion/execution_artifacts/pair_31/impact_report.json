@@ -1,0 +1,88 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:16:47 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/api/Dockerfile",
+    "commit_before": "718ad826a1d501b76f48f6fd91c05e6b140ce78a",
+    "commit_after": "e29629c459ce8e8bc0e01a3f64b46d9c63b25a1a"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R02",
+      "refactoring_name": "Update Base Image TAG",
+      "instructions_before": [
+        {
+          "instruction": "FROM",
+          "value": "node:${NODE_TAG}"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "FROM",
+          "value": "node:${NODE_TAG}"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 79435337,
+      "after": 78521988,
+      "delta_size": -913349
+    },
+    "cves": {
+      "before": 228,
+      "after": 227,
+      "delta_cves": -1,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 7,
+          "HIGH": 52,
+          "MEDIUM": 89,
+          "LOW": 76,
+          "UNKNOWN": 4
+        },
+        "after": {
+          "CRITICAL": 7,
+          "HIGH": 51,
+          "MEDIUM": 91,
+          "LOW": 74,
+          "UNKNOWN": 4
+        },
+        "delta": {
+          "CRITICAL": 0,
+          "HIGH": -1,
+          "MEDIUM": 2,
+          "LOW": -2,
+          "UNKNOWN": 0
+        }
+      }
+    },
+    "warnings": {
+      "before": 2,
+      "after": 2,
+      "delta_warnings": 0
+    },
+    "logical_instructions": {
+      "before": 15,
+      "after": 15,
+      "delta_logical_instructions": 0
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

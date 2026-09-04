@@ -1,0 +1,46 @@
+{
+  "before": [
+    {
+      "code": "DL3008",
+      "column": 1,
+      "file": "-",
+      "level": "warning",
+      "line": 15,
+      "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`"
+    },
+    {
+      "code": "DL3008",
+      "column": 1,
+      "file": "-",
+      "level": "warning",
+      "line": 17,
+      "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`"
+    },
+    {
+      "code": "DL3059",
+      "column": 1,
+      "file": "-",
+      "level": "info",
+      "line": 40,
+      "message": "Multiple consecutive `RUN` instructions. Consider consolidation."
+    }
+  ],
+  "after": [
+    {
+      "code": "DL3008",
+      "column": 1,
+      "file": "-",
+      "level": "warning",
+      "line": 15,
+      "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`"
+    },
+    {
+      "code": "DL3008",
+      "column": 1,
+      "file": "-",
+      "level": "warning",
+      "line": 17,
+      "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`"
+    }
+  ]
+}

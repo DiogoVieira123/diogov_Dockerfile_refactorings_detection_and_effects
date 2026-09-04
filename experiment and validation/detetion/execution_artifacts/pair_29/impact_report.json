@@ -1,0 +1,96 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:16:29 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/auth/Dockerfile",
+    "commit_before": "a360a9d89a7829461d042bc23cf1cb291221306f",
+    "commit_after": "cec0e2515e95fb666c4c427a30c49d3af8770d42"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R11",
+      "refactoring_name": "Move Stage",
+      "instructions_before": [
+        {
+          "instruction": "WORKDIR",
+          "value": "/trust"
+        },
+        {
+          "instruction": "COPY",
+          "value": "deploy/trust/ ./"
+        },
+        {
+          "instruction": "RUN",
+          "value": "mkdir -p /opt/trust && cat ./*.crt > /opt/trust/internal_ca_bundle.crt"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "FROM",
+          "value": "platform/ca_bundle:2024.1 AS certs"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 37588891,
+      "after": 37588891,
+      "delta_size": 0
+    },
+    "cves": {
+      "before": 156,
+      "after": 156,
+      "delta_cves": 0,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 5,
+          "HIGH": 32,
+          "MEDIUM": 69,
+          "LOW": 46,
+          "UNKNOWN": 4
+        },
+        "after": {
+          "CRITICAL": 5,
+          "HIGH": 32,
+          "MEDIUM": 69,
+          "LOW": 46,
+          "UNKNOWN": 4
+        },
+        "delta": {
+          "CRITICAL": 0,
+          "HIGH": 0,
+          "MEDIUM": 0,
+          "LOW": 0,
+          "UNKNOWN": 0
+        }
+      }
+    },
+    "warnings": {
+      "before": 1,
+      "after": 1,
+      "delta_warnings": 0
+    },
+    "logical_instructions": {
+      "before": 27,
+      "after": 24,
+      "delta_logical_instructions": -3
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

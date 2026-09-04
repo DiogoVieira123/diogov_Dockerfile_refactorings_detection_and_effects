@@ -1,0 +1,128 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:17:59 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/api/Dockerfile",
+    "commit_before": "49bc58f0cf5a3646f04673708bf22ad6941619ce",
+    "commit_after": "da907131e0b8b527e23fad72751d99eb6dad5faa"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R01",
+      "refactoring_name": "Inline RUN Instructions",
+      "instructions_before": [
+        {
+          "instruction": "RUN",
+          "value": "mkdir -p /opt/openapi"
+        },
+        {
+          "instruction": "RUN",
+          "value": "cp ${APP_HOME}/openapi.yaml /opt/openapi/openapi.yaml && chmod -R a+r /opt/openapi"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "RUN",
+          "value": "mkdir -p /opt/openapi  && cp ${APP_HOME}/openapi.yaml /opt/openapi/openapi.yaml  && chmod -R a+r /opt/openapi"
+        }
+      ]
+    },
+    {
+      "refactoring_id": "R08",
+      "refactoring_name": "Replace ADD with COPY",
+      "instructions_before": [
+        {
+          "instruction": "ADD",
+          "value": "docs/openapi.yaml ${APP_HOME}/openapi.yaml"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "COPY",
+          "value": "docs/openapi.yaml ${APP_HOME}/openapi.yaml"
+        }
+      ]
+    },
+    {
+      "refactoring_id": "R13",
+      "refactoring_name": "Update RUN Instruction",
+      "instructions_before": [
+        {
+          "instruction": "RUN",
+          "value": "mkdir -p /opt/openapi"
+        },
+        {
+          "instruction": "RUN",
+          "value": "cp ${APP_HOME}/openapi.yaml /opt/openapi/openapi.yaml && chmod -R a+r /opt/openapi"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "RUN",
+          "value": "mkdir -p /opt/openapi  && cp ${APP_HOME}/openapi.yaml /opt/openapi/openapi.yaml  && chmod -R a+r /opt/openapi"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 78524350,
+      "after": 78523859,
+      "delta_size": -491
+    },
+    "cves": {
+      "before": 227,
+      "after": 227,
+      "delta_cves": 0,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 7,
+          "HIGH": 51,
+          "MEDIUM": 91,
+          "LOW": 74,
+          "UNKNOWN": 4
+        },
+        "after": {
+          "CRITICAL": 7,
+          "HIGH": 51,
+          "MEDIUM": 91,
+          "LOW": 74,
+          "UNKNOWN": 4
+        },
+        "delta": {
+          "CRITICAL": 0,
+          "HIGH": 0,
+          "MEDIUM": 0,
+          "LOW": 0,
+          "UNKNOWN": 0
+        }
+      }
+    },
+    "warnings": {
+      "before": 2,
+      "after": 2,
+      "delta_warnings": 0
+    },
+    "logical_instructions": {
+      "before": 29,
+      "after": 28,
+      "delta_logical_instructions": -1
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

@@ -384,6 +384,25 @@ def test_no_image_is_built_when_retrieval_fails(wired, tmp_path, monkeypatch):
 # --- Command-line entry point --------------------------------------------------------
 
 
+def test_an_empty_output_directory_is_refused():
+    # An argparse default applies only when the option is absent, so an
+    # empty -o is not the same as omitting it: it would resolve to the
+    # working directory and scatter the artifacts wherever the tool ran.
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["/repo", "aaa", "bbb", "-o", ""])
+    assert exit_info.value.code == 2
+
+
+def test_a_blank_output_directory_is_refused():
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["/repo", "aaa", "bbb", "-o", "   "])
+    assert exit_info.value.code == 2
+
+
+def test_omitting_the_output_directory_keeps_the_default():
+    arguments = cli.build_parser().parse_args(["/repo", "aaa", "bbb"])
+    assert arguments.output == "./impact_report"
+
 def test_the_cli_returns_zero_and_prints_the_summary(wired, tmp_path, capsys):
     code = cli.main(["/repo", "aaa", "bbb", "-o", str(tmp_path)])
     assert code == cli.EXIT_OK

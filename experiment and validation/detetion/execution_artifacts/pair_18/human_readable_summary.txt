@@ -1,0 +1,49 @@
+==============================================================================
+  Dockerfile Refactoring Impact Report
+==============================================================================
+  Analysed        : 2026-08-31 23:15:02 UTC
+  Repository      : /var/tmp/docker-refactoring-corpus
+  Dockerfile      : services/api/Dockerfile
+  Commits         : 05eecec711f035a067c6bc55d4071dc428478f6b -> 741f0eaa3d4112cf836a1d8c32b139863efb0f59
+
+------------------------------------------------------------------------------
+  Refactorings detected
+------------------------------------------------------------------------------
+  None. No supported refactoring was recognised between the
+  two states; the metrics below still describe the change.
+
+------------------------------------------------------------------------------
+  Measured impact
+------------------------------------------------------------------------------
+  Metric                            Before           After           Delta
+  Image size (bytes)            79,434,612      79,434,612              +0
+  CVEs (distinct)                      228             228              +0
+  Warnings (47-rule)                     2               2              +0
+  Logical instructions                  13              13              +0
+
+------------------------------------------------------------------------------
+  Reading convention
+------------------------------------------------------------------------------
+  delta = after - before. For size, CVEs and warnings a negative delta is an
+  improvement. Delta of logical instructions is not monotonic: consolidation
+  and removal reduce it while extraction and addition increase it, so its
+  sign must be read against the refactoring that produced it.
+
+------------------------------------------------------------------------------
+  Environment
+------------------------------------------------------------------------------
+  docker_engine           29.1.3
+  hadolint                Haskell Dockerfile Linter 2.14.0
+  trivy                   0.72.0
+  trivy_vulnerability_db  2026-08-31T13:59:52.78069098Z
+  dockerfile_parse        2.0.1
+  gitpython               3.1.50
+  docker_sdk              7.1.0
+  python                  3.14.4
+
+------------------------------------------------------------------------------
+  Retained source analysis artifacts
+------------------------------------------------------------------------------
+  raw_data/trivy_raw.json
+  raw_data/hadolint_raw.json
+==============================================================================

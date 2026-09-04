@@ -1,0 +1,124 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:19:15 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/worker/Dockerfile",
+    "commit_before": "58d9f5c08257aba7d4edbf473fab1ec13a1d570d",
+    "commit_after": "98b472dcae70d251a5e6eabecf0383bb5f1b9fa4"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R01",
+      "refactoring_name": "Inline RUN Instructions",
+      "instructions_before": [
+        {
+          "instruction": "RUN",
+          "value": "apt-get update"
+        },
+        {
+          "instruction": "RUN",
+          "value": "apt-get install -y --no-install-recommends python3 python3-pip && rm -rf /var/lib/apt/lists/*"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "RUN",
+          "value": "apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*"
+        }
+      ]
+    },
+    {
+      "refactoring_id": "R10",
+      "refactoring_name": "Update Base Image",
+      "instructions_before": [
+        {
+          "instruction": "FROM",
+          "value": "debian:12-slim AS reports"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "FROM",
+          "value": "python:3.11-slim-bookworm AS reports"
+        }
+      ]
+    },
+    {
+      "refactoring_id": "R13",
+      "refactoring_name": "Update RUN Instruction",
+      "instructions_before": [
+        {
+          "instruction": "RUN",
+          "value": "mkdir -p /opt/reports/templates && cp /etc/os-release /opt/reports/templates/base_os && python3 -c \"print('statement renderer ready')\" > /opt/reports/status && chmod -R a+r /opt/reports"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "RUN",
+          "value": "mkdir -p /opt/reports/templates  && cp /etc/os-release /opt/reports/templates/base_os  && python3 -c \"print('statement renderer ready')\" > /opt/reports/status  && chmod -R a+r /opt/reports"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 51923057,
+      "after": 51923062,
+      "delta_size": 5
+    },
+    "cves": {
+      "before": 120,
+      "after": 120,
+      "delta_cves": 0,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 5,
+          "HIGH": 14,
+          "MEDIUM": 45,
+          "LOW": 51,
+          "UNKNOWN": 5
+        },
+        "after": {
+          "CRITICAL": 5,
+          "HIGH": 14,
+          "MEDIUM": 45,
+          "LOW": 51,
+          "UNKNOWN": 5
+        },
+        "delta": {
+          "CRITICAL": 0,
+          "HIGH": 0,
+          "MEDIUM": 0,
+          "LOW": 0,
+          "UNKNOWN": 0
+        }
+      }
+    },
+    "warnings": {
+      "before": 1,
+      "after": 1,
+      "delta_warnings": 0
+    },
+    "logical_instructions": {
+      "before": 33,
+      "after": 32,
+      "delta_logical_instructions": -1
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

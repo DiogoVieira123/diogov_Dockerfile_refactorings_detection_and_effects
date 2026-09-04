@@ -139,17 +139,17 @@ export GETTING_STARTED_REPO="$HOME/getting-started"
 pytest
 ```
 
-299 tests are collected. With both dependencies present, **all 299 pass and
+302 tests are collected. With both dependencies present, **all 302 pass and
 none is skipped**. Without them the suite still runs and still fails nothing:
 
 | Environment | Result |
 |---|---|
-| WSL2, Docker running, clone present | 299 passed |
-| No `GETTING_STARTED_REPO` | 298 passed, 1 skipped |
-| No Docker daemon (e.g. run from Windows) | 295 passed, 4 skipped |
-| Neither | 294 passed, 5 skipped |
+| WSL2, Docker running, clone present | 302 passed |
+| No `GETTING_STARTED_REPO` | 301 passed, 1 skipped |
+| No Docker daemon (e.g. run from Windows) | 298 passed, 4 skipped |
+| Neither | 297 passed, 5 skipped |
 
-The 294 that need nothing external cover the detection engine in full, which is
+The 297 that need nothing external cover the detection engine in full, which is
 pure Python: a reader wanting only to verify detection needs no Docker and no
 network.
 

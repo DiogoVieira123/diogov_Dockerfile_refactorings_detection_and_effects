@@ -1,0 +1,88 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-09-02 00:06:51 UTC",
+    "repository": "/var/tmp/test-r10-isolated",
+    "dockerfile_path": "Dockerfile",
+    "commit_before": "f0629fff309d9be236e05addbb1ccb3f66de78d2",
+    "commit_after": "ad8b2986f047300c1c58f1b97d93aad7e5270532"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R10",
+      "refactoring_name": "Update Base Image",
+      "instructions_before": [
+        {
+          "instruction": "FROM",
+          "value": "debian:12-slim"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "FROM",
+          "value": "alpine:3.19"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 28234415,
+      "after": 3421731,
+      "delta_size": -24812684
+    },
+    "cves": {
+      "before": 96,
+      "after": 4,
+      "delta_cves": -92,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 4,
+          "HIGH": 9,
+          "MEDIUM": 39,
+          "LOW": 38,
+          "UNKNOWN": 6
+        },
+        "after": {
+          "CRITICAL": 0,
+          "HIGH": 1,
+          "MEDIUM": 2,
+          "LOW": 1,
+          "UNKNOWN": 0
+        },
+        "delta": {
+          "CRITICAL": -4,
+          "HIGH": -8,
+          "MEDIUM": -37,
+          "LOW": -37,
+          "UNKNOWN": -6
+        }
+      }
+    },
+    "warnings": {
+      "before": 0,
+      "after": 0,
+      "delta_warnings": 0
+    },
+    "logical_instructions": {
+      "before": 1,
+      "after": 1,
+      "delta_logical_instructions": 0
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-09-01T19:20:44.271377878Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

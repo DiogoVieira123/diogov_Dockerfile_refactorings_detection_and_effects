@@ -1,0 +1,88 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-09-02 23:19:51 UTC",
+    "repository": "/var/tmp/demo_test_env",
+    "dockerfile_path": "Dockerfile",
+    "commit_before": "HEAD~1",
+    "commit_after": "HEAD"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R02",
+      "refactoring_name": "Update Base Image TAG",
+      "instructions_before": [
+        {
+          "instruction": "FROM",
+          "value": "node:18.16.0"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "FROM",
+          "value": "node:18.16.0-alpine"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 396508032,
+      "after": 53229248,
+      "delta_size": -343278784
+    },
+    "cves": {
+      "before": 8940,
+      "after": 49,
+      "delta_cves": -8891,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 56,
+          "HIGH": 1894,
+          "MEDIUM": 5991,
+          "LOW": 954,
+          "UNKNOWN": 45
+        },
+        "after": {
+          "CRITICAL": 2,
+          "HIGH": 21,
+          "MEDIUM": 15,
+          "LOW": 11,
+          "UNKNOWN": 0
+        },
+        "delta": {
+          "CRITICAL": -54,
+          "HIGH": -1873,
+          "MEDIUM": -5976,
+          "LOW": -943,
+          "UNKNOWN": -45
+        }
+      }
+    },
+    "warnings": {
+      "before": 0,
+      "after": 0,
+      "delta_warnings": 0
+    },
+    "logical_instructions": {
+      "before": 4,
+      "after": 4,
+      "delta_logical_instructions": 0
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-09-02T20:01:19.708956607Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

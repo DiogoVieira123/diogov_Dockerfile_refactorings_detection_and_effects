@@ -1,0 +1,116 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:13:10 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/auth/Dockerfile",
+    "commit_before": "25c70883c794f820807e9cdefae1267fc7684ffb",
+    "commit_after": "e6d35ca91c1d1ba00706a53a914e59fed8cc9f30"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R05",
+      "refactoring_name": "Extract Stage",
+      "instructions_before": [
+        {
+          "instruction": "WORKDIR",
+          "value": "/src"
+        },
+        {
+          "instruction": "COPY",
+          "value": "go.mod go.sum ./"
+        },
+        {
+          "instruction": "RUN",
+          "value": "go mod download"
+        },
+        {
+          "instruction": "COPY",
+          "value": ". ."
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "COPY",
+          "value": "--from=builder /out/authd /usr/local/bin/authd"
+        }
+      ]
+    },
+    {
+      "refactoring_id": "R14",
+      "refactoring_name": "Rename Image",
+      "instructions_before": [
+        {
+          "instruction": "FROM",
+          "value": "golang:1.21-bookworm"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "FROM",
+          "value": "golang:1.21-bookworm AS builder"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 316648069,
+      "after": 35747976,
+      "delta_size": -280900093
+    },
+    "cves": {
+      "before": 6508,
+      "after": 156,
+      "delta_cves": -6352,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 20,
+          "HIGH": 1242,
+          "MEDIUM": 4515,
+          "LOW": 591,
+          "UNKNOWN": 140
+        },
+        "after": {
+          "CRITICAL": 5,
+          "HIGH": 32,
+          "MEDIUM": 69,
+          "LOW": 46,
+          "UNKNOWN": 4
+        },
+        "delta": {
+          "CRITICAL": -15,
+          "HIGH": -1210,
+          "MEDIUM": -4446,
+          "LOW": -545,
+          "UNKNOWN": -136
+        }
+      }
+    },
+    "warnings": {
+      "before": 0,
+      "after": 1,
+      "delta_warnings": 1
+    },
+    "logical_instructions": {
+      "before": 8,
+      "after": 11,
+      "delta_logical_instructions": 3
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

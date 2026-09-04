@@ -1,0 +1,48 @@
+==============================================================================
+  Dockerfile Refactoring Impact Report
+==============================================================================
+  Analysed        : 2026-08-31 23:17:30 UTC
+  Repository      : /var/tmp/docker-refactoring-corpus
+  Dockerfile      : services/auth/Dockerfile
+  Commits         : 5156d4669ab234f5e0f36af6f9bb74e904c117fc -> 98fe3b065f4f1feb0966ab8b8e8cb05b92a7902d
+
+------------------------------------------------------------------------------
+  Refactorings detected
+------------------------------------------------------------------------------
+  R06  Inline Stage
+
+------------------------------------------------------------------------------
+  Measured impact
+------------------------------------------------------------------------------
+  Metric                            Before           After           Delta
+  Image size (bytes)            38,702,664      38,702,664              +0
+  CVEs (distinct)                      156             156              +0
+  Warnings (47-rule)                     1               1              +0
+  Logical instructions                  31              26              -5
+
+------------------------------------------------------------------------------
+  Reading convention
+------------------------------------------------------------------------------
+  delta = after - before. For size, CVEs and warnings a negative delta is an
+  improvement. Delta of logical instructions is not monotonic: consolidation
+  and removal reduce it while extraction and addition increase it, so its
+  sign must be read against the refactoring that produced it.
+
+------------------------------------------------------------------------------
+  Environment
+------------------------------------------------------------------------------
+  docker_engine           29.1.3
+  hadolint                Haskell Dockerfile Linter 2.14.0
+  trivy                   0.72.0
+  trivy_vulnerability_db  2026-08-31T13:59:52.78069098Z
+  dockerfile_parse        2.0.1
+  gitpython               3.1.50
+  docker_sdk              7.1.0
+  python                  3.14.4
+
+------------------------------------------------------------------------------
+  Retained source analysis artifacts
+------------------------------------------------------------------------------
+  raw_data/trivy_raw.json
+  raw_data/hadolint_raw.json
+==============================================================================

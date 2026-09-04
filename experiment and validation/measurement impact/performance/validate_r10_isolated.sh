@@ -23,17 +23,38 @@ set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
 
-TOOL="${TOOL:-/mnt/c/Users/Lenovo/Documents/diogov_Dockerfile_refactorings_detection_and_effects/main.py}"
+# Located by walking up from this script's own directory until main.py is
+# found, so the demonstration runs from a clone at any path and the script
+# keeps working wherever inside the repository it is filed. Override with
+# TOOL=... to point at a checkout elsewhere.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+locate_tool() {
+    local dir="$SCRIPT_DIR"
+    while [ "$dir" != "/" ]; do
+        if [ -f "$dir/main.py" ]; then
+            printf '%s
+' "$dir/main.py"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+
+TOOL="${TOOL:-$(locate_tool || true)}"
 REPO="${REPO:-/var/tmp/test-r10-isolated}"
 OUTPUT_NAME="${OUTPUT_NAME:-r10_isolated_report}"
 
 IMAGE_BEFORE="debian:12-slim"
 IMAGE_AFTER="alpine:3.19"
 
-# Captured before anything changes directory, so -o resolves against the
-# directory the operator ran the script from.
-WORKDIR="$(pwd)"
-OUTPUT="$WORKDIR/$OUTPUT_NAME"
+# The report is written beside the script, not into whatever directory the
+# operator happens to be in. The script is filed with the artefacts it
+# produces, so anchoring the output to its own location means the results
+# land in the same place however it is invoked. Override with OUTPUT=... to
+# send them elsewhere.
+OUTPUT="${OUTPUT:-$SCRIPT_DIR/$OUTPUT_NAME}"
 
 RULE="------------------------------------------------------------------"
 
@@ -46,7 +67,9 @@ step "Checking preconditions"
 
 command -v git >/dev/null 2>&1 || fail "git is not on PATH."
 command -v python3 >/dev/null 2>&1 || fail "python3 is not on PATH."
-[ -f "$TOOL" ] || fail "The tool was not found at '$TOOL'. Set TOOL to its path."
+[ -n "$TOOL" ] && [ -f "$TOOL" ] || fail "main.py was not found above
+        '$SCRIPT_DIR'. Run this script from inside the repository, or set
+        TOOL to the path of main.py."
 
 if ! docker info >/dev/null 2>&1; then
     fail "No reachable Docker daemon. Stages 3 and 4 build both images and run

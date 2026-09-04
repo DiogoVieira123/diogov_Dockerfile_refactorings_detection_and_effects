@@ -1,0 +1,96 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:18:33 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/api/Dockerfile",
+    "commit_before": "146247ded27227ef1fa773dd34ee61f0682a1991",
+    "commit_after": "694ff06297bafc48a48229605be203ab8223d10e"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R08",
+      "refactoring_name": "Replace ADD with COPY",
+      "instructions_before": [
+        {
+          "instruction": "ADD",
+          "value": "--chown=10001:10001 deploy/certs/ /etc/api/certs/"
+        },
+        {
+          "instruction": "ADD",
+          "value": "--chown=10001:10001 deploy/trust/internal_ca.crt /usr/local/share/ca-certificates/internal_ca.crt"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "COPY",
+          "value": "--chown=10001:10001      deploy/certs/      /etc/api/certs/"
+        },
+        {
+          "instruction": "COPY",
+          "value": "--chown=10001:10001      deploy/trust/internal_ca.crt      /usr/local/share/ca-certificates/internal_ca.crt"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 78525238,
+      "after": 78525240,
+      "delta_size": 2
+    },
+    "cves": {
+      "before": 227,
+      "after": 227,
+      "delta_cves": 0,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 7,
+          "HIGH": 51,
+          "MEDIUM": 91,
+          "LOW": 74,
+          "UNKNOWN": 4
+        },
+        "after": {
+          "CRITICAL": 7,
+          "HIGH": 51,
+          "MEDIUM": 91,
+          "LOW": 74,
+          "UNKNOWN": 4
+        },
+        "delta": {
+          "CRITICAL": 0,
+          "HIGH": 0,
+          "MEDIUM": 0,
+          "LOW": 0,
+          "UNKNOWN": 0
+        }
+      }
+    },
+    "warnings": {
+      "before": 2,
+      "after": 2,
+      "delta_warnings": 0
+    },
+    "logical_instructions": {
+      "before": 30,
+      "after": 30,
+      "delta_logical_instructions": 0
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

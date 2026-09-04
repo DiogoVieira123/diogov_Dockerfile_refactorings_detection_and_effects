@@ -1,0 +1,88 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:13:32 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/api/Dockerfile",
+    "commit_before": "d80c1df1eadf255ca37960b81899e61c03442912",
+    "commit_after": "1d60d2b9cfe5ae6c4837706ada58f46eb3105d90"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R13",
+      "refactoring_name": "Update RUN Instruction",
+      "instructions_before": [
+        {
+          "instruction": "RUN",
+          "value": "apt-get update && apt-get install -y --no-install-recommends jq tzdata && mkdir -p /opt/support/bin && ln -sf /usr/bin/jq /opt/support/bin/jq && ln -snf /usr/share/zoneinfo/Etc/UTC /etc/localtime && apt-get clean && rm -rf /var/lib/apt/lists/*"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "RUN",
+          "value": "apt-get update  && apt-get install -y --no-install-recommends         jq         tzdata  && mkdir -p /opt/support/bin  && ln -sf /usr/bin/jq /opt/support/bin/jq  && ln -snf /usr/share/zoneinfo/Etc/UTC /etc/localtime  && apt-get clean  && rm -rf /var/lib/apt/lists/*"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 79434248,
+      "after": 79434235,
+      "delta_size": -13
+    },
+    "cves": {
+      "before": 228,
+      "after": 228,
+      "delta_cves": 0,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 7,
+          "HIGH": 52,
+          "MEDIUM": 89,
+          "LOW": 76,
+          "UNKNOWN": 4
+        },
+        "after": {
+          "CRITICAL": 7,
+          "HIGH": 52,
+          "MEDIUM": 89,
+          "LOW": 76,
+          "UNKNOWN": 4
+        },
+        "delta": {
+          "CRITICAL": 0,
+          "HIGH": 0,
+          "MEDIUM": 0,
+          "LOW": 0,
+          "UNKNOWN": 0
+        }
+      }
+    },
+    "warnings": {
+      "before": 2,
+      "after": 2,
+      "delta_warnings": 0
+    },
+    "logical_instructions": {
+      "before": 12,
+      "after": 12,
+      "delta_logical_instructions": 0
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

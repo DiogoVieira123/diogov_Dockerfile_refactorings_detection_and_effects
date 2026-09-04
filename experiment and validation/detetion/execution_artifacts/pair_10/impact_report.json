@@ -1,0 +1,104 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:13:57 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/auth/Dockerfile",
+    "commit_before": "966955cabb2bf618f82ed0ac5f7b22497eab4294",
+    "commit_after": "979dd14093158b244e8a4902bf15f6e9695a721a"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R05",
+      "refactoring_name": "Extract Stage",
+      "instructions_before": [
+        {
+          "instruction": "WORKDIR",
+          "value": "/src"
+        },
+        {
+          "instruction": "COPY",
+          "value": "go.mod go.sum ./"
+        },
+        {
+          "instruction": "RUN",
+          "value": "go mod download"
+        },
+        {
+          "instruction": "COPY",
+          "value": ". ."
+        },
+        {
+          "instruction": "RUN",
+          "value": "CGO_ENABLED=0 go build -o /out/authctl ./cmd/authctl"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "COPY",
+          "value": "--from=0 /out/authctl /usr/local/bin/authctl"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 36939763,
+      "after": 36939763,
+      "delta_size": 0
+    },
+    "cves": {
+      "before": 156,
+      "after": 156,
+      "delta_cves": 0,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 5,
+          "HIGH": 32,
+          "MEDIUM": 69,
+          "LOW": 46,
+          "UNKNOWN": 4
+        },
+        "after": {
+          "CRITICAL": 5,
+          "HIGH": 32,
+          "MEDIUM": 69,
+          "LOW": 46,
+          "UNKNOWN": 4
+        },
+        "delta": {
+          "CRITICAL": 0,
+          "HIGH": 0,
+          "MEDIUM": 0,
+          "LOW": 0,
+          "UNKNOWN": 0
+        }
+      }
+    },
+    "warnings": {
+      "before": 1,
+      "after": 1,
+      "delta_warnings": 0
+    },
+    "logical_instructions": {
+      "before": 14,
+      "after": 19,
+      "delta_logical_instructions": 5
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

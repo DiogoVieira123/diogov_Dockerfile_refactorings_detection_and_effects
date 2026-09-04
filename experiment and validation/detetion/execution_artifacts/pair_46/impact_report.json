@@ -1,0 +1,128 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:18:56 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/auth/Dockerfile",
+    "commit_before": "876aec710eb38d05f24458475513a52c7218c02a",
+    "commit_after": "3bd3cfdf51b7126d9757cb35217811403332764d"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R05",
+      "refactoring_name": "Extract Stage",
+      "instructions_before": [
+        {
+          "instruction": "COPY",
+          "value": "policies/ /tmp/policies/"
+        },
+        {
+          "instruction": "COPY",
+          "value": "deploy/authd.toml /etc/authd/authd.toml"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "COPY",
+          "value": "--from=policy /opt/authd/policies /opt/authd/policies"
+        },
+        {
+          "instruction": "COPY",
+          "value": "--from=policy /etc/authd/authd.toml /etc/authd/authd.toml"
+        }
+      ]
+    },
+    {
+      "refactoring_id": "R10",
+      "refactoring_name": "Update Base Image",
+      "instructions_before": [
+        {
+          "instruction": "FROM",
+          "value": "debian:12-slim"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "FROM",
+          "value": "gcr.io/distroless/base-debian12:nonroot"
+        }
+      ]
+    },
+    {
+      "refactoring_id": "R14",
+      "refactoring_name": "Rename Image",
+      "instructions_before": [
+        {
+          "instruction": "FROM",
+          "value": "platform/ca_bundle:2024.1 AS certs"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "FROM",
+          "value": "platform/ca_bundle:2024.1 AS trust"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 38816942,
+      "after": 15125423,
+      "delta_size": -23691519
+    },
+    "cves": {
+      "before": 156,
+      "after": 83,
+      "delta_cves": -73,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 5,
+          "HIGH": 32,
+          "MEDIUM": 69,
+          "LOW": 46,
+          "UNKNOWN": 4
+        },
+        "after": {
+          "CRITICAL": 1,
+          "HIGH": 22,
+          "MEDIUM": 43,
+          "LOW": 15,
+          "UNKNOWN": 2
+        },
+        "delta": {
+          "CRITICAL": -4,
+          "HIGH": -10,
+          "MEDIUM": -26,
+          "LOW": -31,
+          "UNKNOWN": -2
+        }
+      }
+    },
+    "warnings": {
+      "before": 2,
+      "after": 1,
+      "delta_warnings": -1
+    },
+    "logical_instructions": {
+      "before": 25,
+      "after": 26,
+      "delta_logical_instructions": 1
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

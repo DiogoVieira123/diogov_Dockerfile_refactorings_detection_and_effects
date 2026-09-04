@@ -1,0 +1,120 @@
+{
+  "analysis": {
+    "timestamp_utc": "2026-08-31 23:18:23 UTC",
+    "repository": "/var/tmp/docker-refactoring-corpus",
+    "dockerfile_path": "services/auth/Dockerfile",
+    "commit_before": "fb49a31bf5d615b04f04034038b9a6e5b23bc8d1",
+    "commit_after": "3b2f51de1d3879f7e9bd23b9510183b6e8b2c49b"
+  },
+  "refactorings_detected": [
+    {
+      "refactoring_id": "R02",
+      "refactoring_name": "Update Base Image TAG",
+      "instructions_before": [
+        {
+          "instruction": "FROM",
+          "value": "alpine:latest AS sidecar"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "FROM",
+          "value": "alpine:3.19 AS probe"
+        }
+      ]
+    },
+    {
+      "refactoring_id": "R06",
+      "refactoring_name": "Inline Stage",
+      "instructions_before": [
+        {
+          "instruction": "COPY",
+          "value": "--from=sidecar /opt/probe /usr/local/bin/probe"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "RUN",
+          "value": "mkdir -p /opt/probe  && printf '#!/bin/sh\\nexec wget -q -O /dev/null http://127.0.0.1:4000/healthz\\n' > /opt/probe/probe  && chmod 0755 /opt/probe/probe"
+        }
+      ]
+    },
+    {
+      "refactoring_id": "R14",
+      "refactoring_name": "Rename Image",
+      "instructions_before": [
+        {
+          "instruction": "FROM",
+          "value": "alpine:latest AS sidecar"
+        }
+      ],
+      "instructions_after": [
+        {
+          "instruction": "FROM",
+          "value": "alpine:3.19 AS probe"
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "size_bytes": {
+      "before": 38703989,
+      "after": 38704005,
+      "delta_size": 16
+    },
+    "cves": {
+      "before": 156,
+      "after": 156,
+      "delta_cves": 0,
+      "by_severity": {
+        "before": {
+          "CRITICAL": 5,
+          "HIGH": 32,
+          "MEDIUM": 69,
+          "LOW": 46,
+          "UNKNOWN": 4
+        },
+        "after": {
+          "CRITICAL": 5,
+          "HIGH": 32,
+          "MEDIUM": 69,
+          "LOW": 46,
+          "UNKNOWN": 4
+        },
+        "delta": {
+          "CRITICAL": 0,
+          "HIGH": 0,
+          "MEDIUM": 0,
+          "LOW": 0,
+          "UNKNOWN": 0
+        }
+      }
+    },
+    "warnings": {
+      "before": 2,
+      "after": 1,
+      "delta_warnings": -1
+    },
+    "logical_instructions": {
+      "before": 25,
+      "after": 23,
+      "delta_logical_instructions": -2
+    },
+    "sign_convention": "delta = after - before. For size, CVEs and warnings a negative delta is an improvement. Delta of logical instructions is not monotonic: consolidation and removal reduce it while extraction and addition increase it, so its sign must be read against the refactoring that produced it."
+  },
+  "environment": {
+    "docker_engine": "29.1.3",
+    "hadolint": "Haskell Dockerfile Linter 2.14.0",
+    "trivy": "0.72.0",
+    "trivy_vulnerability_db": "2026-08-31T13:59:52.78069098Z",
+    "dockerfile_parse": "2.0.1",
+    "gitpython": "3.1.50",
+    "docker_sdk": "7.1.0",
+    "python": "3.14.4"
+  },
+  "raw_data": {
+    "directory": "raw_data",
+    "trivy": "raw_data/trivy_raw.json",
+    "hadolint": "raw_data/hadolint_raw.json"
+  }
+}

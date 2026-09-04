@@ -1,0 +1,94 @@
+{
+  "before": [
+    {
+      "code": "DL3009",
+      "column": 1,
+      "file": "-",
+      "level": "info",
+      "line": 5,
+      "message": "Delete the apt lists (/var/lib/apt/lists) after installing something"
+    },
+    {
+      "code": "DL3008",
+      "column": 1,
+      "file": "-",
+      "level": "warning",
+      "line": 6,
+      "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`"
+    },
+    {
+      "code": "DL3059",
+      "column": 1,
+      "file": "-",
+      "level": "info",
+      "line": 6,
+      "message": "Multiple consecutive `RUN` instructions. Consider consolidation."
+    },
+    {
+      "code": "DL3059",
+      "column": 1,
+      "file": "-",
+      "level": "info",
+      "line": 7,
+      "message": "Multiple consecutive `RUN` instructions. Consider consolidation."
+    },
+    {
+      "code": "DL3020",
+      "column": 1,
+      "file": "-",
+      "level": "error",
+      "line": 9,
+      "message": "Use COPY instead of ADD for files and folders"
+    },
+    {
+      "code": "DL3020",
+      "column": 1,
+      "file": "-",
+      "level": "error",
+      "line": 10,
+      "message": "Use COPY instead of ADD for files and folders"
+    },
+    {
+      "code": "DL3020",
+      "column": 1,
+      "file": "-",
+      "level": "error",
+      "line": 14,
+      "message": "Use COPY instead of ADD for files and folders"
+    }
+  ],
+  "after": [
+    {
+      "code": "DL3008",
+      "column": 1,
+      "file": "-",
+      "level": "warning",
+      "line": 5,
+      "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`"
+    },
+    {
+      "code": "DL3020",
+      "column": 1,
+      "file": "-",
+      "level": "error",
+      "line": 7,
+      "message": "Use COPY instead of ADD for files and folders"
+    },
+    {
+      "code": "DL3020",
+      "column": 1,
+      "file": "-",
+      "level": "error",
+      "line": 8,
+      "message": "Use COPY instead of ADD for files and folders"
+    },
+    {
+      "code": "DL3020",
+      "column": 1,
+      "file": "-",
+      "level": "error",
+      "line": 12,
+      "message": "Use COPY instead of ADD for files and folders"
+    }
+  ]
+}

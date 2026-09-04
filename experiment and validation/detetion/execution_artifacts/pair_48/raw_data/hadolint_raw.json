@@ -1,0 +1,38 @@
+{
+  "before": [
+    {
+      "code": "DL3008",
+      "column": 1,
+      "file": "-",
+      "level": "warning",
+      "line": 12,
+      "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`"
+    },
+    {
+      "code": "SC2035",
+      "column": 1,
+      "file": "-",
+      "level": "info",
+      "line": 22,
+      "message": "Use ./*glob* or -- *glob* so names with dashes won't become options."
+    }
+  ],
+  "after": [
+    {
+      "code": "DL3008",
+      "column": 1,
+      "file": "-",
+      "level": "warning",
+      "line": 11,
+      "message": "Pin versions in apt get install. Instead of `apt-get install <package>` use `apt-get install <package>=<version>`"
+    },
+    {
+      "code": "SC2035",
+      "column": 1,
+      "file": "-",
+      "level": "info",
+      "line": 24,
+      "message": "Use ./*glob* or -- *glob* so names with dashes won't become options."
+    }
+  ]
+}
